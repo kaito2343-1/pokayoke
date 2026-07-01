@@ -353,6 +353,7 @@
       let lastScore = null;
       let cameraWidth = 0;
       let cameraHeight = 0;
+      let isProcessing = false;
 
       // ========== ユーティリティ関数 ==========
 
@@ -409,10 +410,183 @@
         const hasOkReference = okReferenceImageData !== null;
 
         rangeSelectButton.disabled = !hasCameraStream;
-        saveOkButton.disabled = !hasSelectedRange || !hasCameraStream;
-        inspectButton.disabled = !hasSelectedRange || !hasOkReference || !hasCameraStream;
+        saveOkButton.disabled = !hasSelectedRange || !hasCameraStream || isProcessing;
+        inspectButton.disabled = !hasSelectedRange || !hasOkReference || !hasCameraStream || isProcessing;
         thresholdSlider.disabled = !hasOkReference;
         resetButton.disabled = !hasSelectedRange && !hasOkReference;
+      }
+
+      // ========== 画像処理：グレースケール化とぼかし ==========
+
+      function applyImageProcessing(imageData) {
+        const data = imageData.data;
+        const width = imageData.width;
+        const height = imageData.height;
+
+        // ステップ1: グレースケール化
+        const grayscaleData = new Uint8ClampedArray(data.length);
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const a = data[i + 3];
+
+          // 標準的なグレースケール変換
+          const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+
+          grayscaleData[i] = gray;
+          grayscaleData[i + 1] = gray;
+          grayscaleData[i + 2] = gray;
+          grayscaleData[i + 3] = a;
+        }
+
+        // ステップ2: ぼかし処理（3x3 ガウシアンフィルタ）
+        const blurredData = new Uint8ClampedArray(grayscaleData.length);
+        const kernel = [
+          1, 2, 1,
+          2, 4, 2,
+          1, 2, 1
+        ];
+        const kernelSum = 16;
+
+        for (let y = 1; y < height - 1; y++) {
+          for (let x = 1; x < width - 1; x++) {
+            let r = 0, g = 0, b = 0, a = 255;
+            let ki = 0;
+
+            for (let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                const idx = ((y + dy) * width + (x + dx)) * 4;
+                r += grayscaleData[idx] * kernel[ki];
+                g += grayscaleData[idx + 1] * kernel[ki];
+                b += grayscaleData[idx + 2] * kernel[ki];
+                ki++;
+              }
+            }
+
+            const idx = (y * width + x) * 4;
+            blurredData[idx] = Math.round(r / kernelSum);
+            blurredData[idx + 1] = Math.round(g / kernelSum);
+            blurredData[idx + 2] = Math.round(b / kernelSum);
+            blurredData[idx + 3] = a;
+          }
+        }
+
+        // 端のピクセルをコピー（ぼかしが適用されない部分）
+        for (let i = 0; i < width; i++) {
+          const topIdx = i * 4;
+          const bottomIdx = ((height - 1) * width + i) * 4;
+          blurredData[topIdx] = grayscaleData[topIdx];
+          blurredData[topIdx + 1] = grayscaleData[topIdx + 1];
+          blurredData[topIdx + 2] = grayscaleData[topIdx + 2];
+          blurredData[topIdx + 3] = grayscaleData[topIdx + 3];
+          blurredData[bottomIdx] = grayscaleData[bottomIdx];
+          blurredData[bottomIdx + 1] = grayscaleData[bottomIdx + 1];
+          blurredData[bottomIdx + 2] = grayscaleData[bottomIdx + 2];
+          blurredData[bottomIdx + 3] = grayscaleData[bottomIdx + 3];
+        }
+
+        for (let y = 1; y < height - 1; y++) {
+          const leftIdx = (y * width) * 4;
+          const rightIdx = (y * width + (width - 1)) * 4;
+          blurredData[leftIdx] = grayscaleData[leftIdx];
+          blurredData[leftIdx + 1] = grayscaleData[leftIdx + 1];
+          blurredData[leftIdx + 2] = grayscaleData[leftIdx + 2];
+          blurredData[leftIdx + 3] = grayscaleData[leftIdx + 3];
+          blurredData[rightIdx] = grayscaleData[rightIdx];
+          blurredData[rightIdx + 1] = grayscaleData[rightIdx + 1];
+          blurredData[rightIdx + 2] = grayscaleData[rightIdx + 2];
+          blurredData[rightIdx + 3] = grayscaleData[rightIdx + 3];
+        }
+
+        return new ImageData(blurredData, width, height);
+      }
+
+      // ========== フレーム取得と処理 ==========
+
+      function captureFrameData() {
+        if (!selectedRange || cameraWidth === 0 || cameraHeight === 0) {
+          return null;
+        }
+
+        try {
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = cameraWidth;
+          tempCanvas.height = cameraHeight;
+          const tempCtx = tempCanvas.getContext('2d');
+          tempCtx.drawImage(video, 0, 0);
+
+          const rawImageData = tempCtx.getImageData(
+            selectedRange.x,
+            selectedRange.y,
+            selectedRange.width,
+            selectedRange.height
+          );
+
+          return applyImageProcessing(rawImageData);
+        } catch (e) {
+          console.error('フレーム取得エラー:', e);
+          return null;
+        }
+      }
+
+      // ========== 画像平均化 ==========
+
+      function averageImageData(imageDataArray) {
+        if (!imageDataArray || imageDataArray.length === 0) {
+          return null;
+        }
+
+        const first = imageDataArray[0];
+        const count = imageDataArray.length;
+        const averagedData = new Uint8ClampedArray(first.data.length);
+
+        for (let i = 0; i < first.data.length; i += 4) {
+          let r = 0, g = 0, b = 0, a = 255;
+
+          for (let j = 0; j < count; j++) {
+            r += imageDataArray[j].data[i];
+            g += imageDataArray[j].data[i + 1];
+            b += imageDataArray[j].data[i + 2];
+          }
+
+          averagedData[i] = Math.round(r / count);
+          averagedData[i + 1] = Math.round(g / count);
+          averagedData[i + 2] = Math.round(b / count);
+          averagedData[i + 3] = a;
+        }
+
+        return new ImageData(averagedData, first.width, first.height);
+      }
+
+      // ========== スコア計算 ==========
+
+      function calculateDifferenceScore(referenceImageData, currentImageData) {
+        if (!referenceImageData || !currentImageData) {
+          return null;
+        }
+
+        try {
+          const refData = referenceImageData.data;
+          const curData = currentImageData.data;
+
+          let totalDifference = 0;
+          const pixelCount = refData.length / 4;
+
+          for (let i = 0; i < refData.length; i += 4) {
+            const diffR = Math.abs(refData[i] - curData[i]);
+            const diffG = Math.abs(refData[i + 1] - curData[i + 1]);
+            const diffB = Math.abs(refData[i + 2] - curData[i + 2]);
+
+            totalDifference += (diffR + diffG + diffB) / 3;
+          }
+
+          const score = Math.min(100, Math.round((totalDifference / pixelCount) * 100 / 255));
+          return score;
+        } catch (e) {
+          console.error('スコア計算エラー:', e);
+          return null;
+        }
       }
 
       // ========== カメラ起動 ==========
@@ -424,14 +598,12 @@
           currentStream = stream;
           video.srcObject = stream;
 
-          // iOS Safari での再生
           try {
             await video.play();
           } catch (playError) {
             console.warn('video.play() failed:', playError);
           }
 
-          // ビデオサイズの取得
           video.addEventListener(
             'loadedmetadata',
             () => {
@@ -505,7 +677,6 @@
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         if (selectedRange) {
-          // 保存済み範囲を描画
           ctx.strokeStyle = '#ffff00';
           ctx.lineWidth = 3;
           ctx.strokeRect(
@@ -515,7 +686,6 @@
             selectedRange.height
           );
 
-          // 範囲内を半透明で塗りつぶし
           ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
           ctx.fillRect(
             selectedRange.x,
@@ -526,7 +696,6 @@
         }
 
         if (isRangeSelecting && selectionStart && selectionEnd) {
-          // 選択中の範囲を描画
           const x = Math.min(selectionStart.x, selectionEnd.x);
           const y = Math.min(selectionStart.y, selectionEnd.y);
           const width = Math.abs(selectionEnd.x - selectionStart.x);
@@ -610,108 +779,112 @@
         startRangeSelection();
       });
 
-      // ========== OK基準保存 ==========
+      // ========== OK基準保存（5枚平均化） ==========
 
-      saveOkButton.addEventListener('click', () => {
+      saveOkButton.addEventListener('click', async () => {
         if (!selectedRange || cameraWidth === 0 || cameraHeight === 0) {
           showStatus('範囲を選択してください。', 'info');
           return;
         }
 
+        isProcessing = true;
+        updateButtonStates();
+
         try {
-          // ビデオフレームを canvas に描画
-          const tempCanvas = document.createElement('canvas');
-          tempCanvas.width = cameraWidth;
-          tempCanvas.height = cameraHeight;
-          const tempCtx = tempCanvas.getContext('2d');
-          tempCtx.drawImage(video, 0, 0);
+          const frames = [];
+          const frameCount = 5;
+          const interval = 300; // 0.3秒
 
-          // 選択範囲を抽出
-          okReferenceImageData = tempCtx.getImageData(
-            selectedRange.x,
-            selectedRange.y,
-            selectedRange.width,
-            selectedRange.height
-          );
+          for (let i = 1; i <= frameCount; i++) {
+            showStatus(`OK基準作成中 ${i}/${frameCount}`, 'info');
+            const frameData = captureFrameData();
 
-          showStatus('OK基準を保存しました。', 'success');
-          updateButtonStates();
+            if (frameData) {
+              frames.push(frameData);
+            }
+
+            if (i < frameCount) {
+              await new Promise(resolve => setTimeout(resolve, interval));
+            }
+          }
+
+          if (frames.length === frameCount) {
+            okReferenceImageData = averageImageData(frames);
+            showStatus('OK基準を保存しました。', 'success');
+            updateButtonStates();
+          } else {
+            showStatus('フレーム取得に失敗しました。', 'info');
+          }
         } catch (e) {
           showError('OK基準の保存に失敗しました: ' + e.message);
+        } finally {
+          isProcessing = false;
+          updateButtonStates();
         }
       });
 
-      // ========== 差分スコア計算 ==========
+      // ========== 検査開始（3回平均化） ==========
 
-      function calculateDifferenceScore() {
-        if (!selectedRange || !okReferenceImageData || cameraWidth === 0) {
-          return null;
-        }
-
-        try {
-          // 現在のビデオフレームを canvas に描画
-          const tempCanvas = document.createElement('canvas');
-          tempCanvas.width = cameraWidth;
-          tempCanvas.height = cameraHeight;
-          const tempCtx = tempCanvas.getContext('2d');
-          tempCtx.drawImage(video, 0, 0);
-
-          // 現在の選択範囲を抽出
-          const currentImageData = tempCtx.getImageData(
-            selectedRange.x,
-            selectedRange.y,
-            selectedRange.width,
-            selectedRange.height
-          );
-
-          // ピクセルごとに差分を計算
-          const refData = okReferenceImageData.data;
-          const curData = currentImageData.data;
-
-          let totalDifference = 0;
-          const pixelCount = refData.length / 4;
-
-          for (let i = 0; i < refData.length; i += 4) {
-            // RGB の差分を計算（A は無視）
-            const diffR = Math.abs(refData[i] - curData[i]);
-            const diffG = Math.abs(refData[i + 1] - curData[i + 1]);
-            const diffB = Math.abs(refData[i + 2] - curData[i + 2]);
-
-            totalDifference += (diffR + diffG + diffB) / 3;
-          }
-
-          // 0-100 のスコアに正規化
-          const score = Math.min(100, Math.round((totalDifference / pixelCount) * 100 / 255));
-          return score;
-        } catch (e) {
-          console.error('差分スコア計算エラー:', e);
-          return null;
-        }
-      }
-
-      // ========== 検査開始 ==========
-
-      inspectButton.addEventListener('click', () => {
+      inspectButton.addEventListener('click', async () => {
         if (!selectedRange || !okReferenceImageData) {
           showStatus('基準を設定してください。', 'info');
           return;
         }
 
-        const score = calculateDifferenceScore();
+        isProcessing = true;
+        updateButtonStates();
 
-        if (score === null) {
-          showStatus('検査に失敗しました。', 'info');
-          return;
+        try {
+          const scores = [];
+          const inspectCount = 3;
+          const interval = 200; // 0.2秒
+
+          for (let i = 1; i <= inspectCount; i++) {
+            showStatus(`検査中 ${i}/${inspectCount}`, 'info');
+
+            const frameData = captureFrameData();
+            if (frameData) {
+              const score = calculateDifferenceScore(okReferenceImageData, frameData);
+              if (score !== null) {
+                scores.push(score);
+              }
+            }
+
+            if (i < inspectCount) {
+              await new Promise(resolve => setTimeout(resolve, interval));
+            }
+          }
+
+          if (scores.length === inspectCount) {
+            // 3回の平均スコアを計算
+            const averageScore = Math.round(
+              scores.reduce((a, b) => a + b, 0) / scores.length
+            );
+
+            // 3回中2回以上NGなら最終判定はNG
+            const threshold = parseInt(thresholdSlider.value, 10);
+            const ngCount = scores.filter(s => s > threshold).length;
+            const isFinalOk = ngCount < 2; // 2回以上NGなら NG
+
+            lastScore = averageScore;
+            scoreValue.textContent = averageScore;
+
+            showResult(isFinalOk);
+            showStatus(
+              `検査完了: 平均スコア ${averageScore} (${isFinalOk ? 'OK' : 'NG'})`,
+              isFinalOk ? 'success' : 'info'
+            );
+
+            console.log(`検査スコア: ${scores.join(', ')} → 平均: ${averageScore}, NG数: ${ngCount}, 最終判定: ${isFinalOk ? 'OK' : 'NG'}`);
+          } else {
+            showStatus('検査に失敗しました。', 'info');
+          }
+        } catch (e) {
+          showError('検査処理に失敗しました: ' + e.message);
+        } finally {
+          isProcessing = false;
+          updateButtonStates();
         }
-
-        lastScore = score;
-        scoreValue.textContent = score;
-
-        const threshold = parseInt(thresholdSlider.value, 10);
-        const isOk = score <= threshold;
-
-        showResult(isOk);
-        showStatus(`検査完了: スコア ${score} (${isOk ? 'OK' : 'NG'})`, isOk ? 'success' : 'info');
       });
 
       // ========== しきい値スライダー ==========
@@ -745,9 +918,10 @@
         let status = 'ポカヨケ検査アプリ 状態確認\n\n';
         status += `カメラ: ${currentStream ? '起動中' : '未起動'}\n`;
         status += `範囲選択: ${selectedRange ? '完了' : '未選択'}\n`;
-        status += `OK基準: ${okReferenceImageData ? '保存済み' : '未保存'}\n`;
+        status += `OK基準: ${okReferenceImageData ? '保存済み（5枚平均）' : '未保存'}\n`;
         status += `最終スコア: ${lastScore !== null ? lastScore : '-'}\n`;
-        status += `しきい値: ${thresholdSlider.value}`;
+        status += `しきい値: ${thresholdSlider.value}\n`;
+        status += `処理中: ${isProcessing ? 'はい' : 'いいえ'}`;
         alert(status);
       });
 
