@@ -645,46 +645,47 @@
 
       // ========== 画像統計情報を計算 ==========
 
-      function calculateImageStats(imageData) {
-        const data = imageData.data;
-        let redCount = 0;
-        let totalSaturation = 0;
-        let validPixelCount = 0;
+    function calculateImageStats(imageData) {
+  const data = imageData.data;
+  let redCount = 0;
+  let totalSaturation = 0;
+  let validPixelCount = 0;
 
-        for (let i = 0; i < data.length; i += 4) {
-          const r = data[i];
-          const g = data[i + 1];
-          const b = data[i + 2];
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
 
-          const gray = (r + g + b) / 3;
-          if (gray < 20) continue; // グレースケール、暗いピクセル除外
+    const gray = (r + g + b) / 3;
+    if (gray < 20) continue; // グレースケールが暗すぎる部分は除外
 
-          const hsv = rgbToHsv(r, g, b);
-          totalSaturation += hsv.s;
-          validPixelCount++;
+    const hsv = rgbToHsv(r, g, b);
 
-          // 赤色判定（色相が0-30 or 330-360）
-          if ((hsv.h <= 30 || hsv.h >= 330) && hsv.s > 0.25 && hsv.v > 0.2) {
-  redCount++;
+    totalSaturation += hsv.s;
+    validPixelCount++;
+
+    // 赤色判定
+    // 色相が赤の範囲でも、彩度が低い銀色・白・グレーは赤として数えない
+    if ((hsv.h <= 30 || hsv.h >= 330) && hsv.s > 0.25 && hsv.v > 0.2) {
+      redCount++;
+    }
+  }
+
+  if (validPixelCount === 0) {
+    return {
+      redRate: 0,
+      avgSaturation: 0,
+      histogram: new Array(16 * 16).fill(0)
+    };
+  }
+
+  return {
+    redRate: (redCount / validPixelCount) * 100,
+    avgSaturation: totalSaturation / validPixelCount,
+    histogram: calculateColorHistogram(imageData)
+  };
 }
-
-          }
-        }
-
-        if (validPixelCount === 0) {
-          return {
-            redRate: 0,
-            avgSaturation: 0,
-            histogram: new Array(16 * 16).fill(0)
-          };
-        }
-
-        return {
-          redRate: (redCount / validPixelCount) * 100,
-          avgSaturation: totalSaturation / validPixelCount,
-          histogram: calculateColorHistogram(imageData)
-        };
-      }
+      
 
       // ========== 色差分スコア計算 ==========
 
