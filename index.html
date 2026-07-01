@@ -179,8 +179,70 @@
       justify-content: center;
       align-items: center;
       overflow-y: auto;
-      max-height: 150px;
+      max-height: 200px;
       flex-shrink: 0;
+    }
+
+    .threshold-control {
+      background: #222;
+      padding: 12px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      order: -1;
+      width: 100%;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .threshold-label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #ffff00;
+      min-width: 80px;
+      text-align: center;
+    }
+
+    .threshold-button {
+      background: #ff9800;
+      color: #fff;
+      border: none;
+      padding: 16px 20px;
+      font-size: 18px;
+      font-weight: bold;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.2s;
+      -webkit-user-select: none;
+      user-select: none;
+      min-width: 50px;
+      flex-shrink: 0;
+    }
+
+    .threshold-button:active {
+      background: #e68900;
+    }
+
+    .threshold-slider-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .threshold-slider-wrapper input[type="range"] {
+      width: 100px;
+      height: 24px;
+      cursor: pointer;
+    }
+
+    .threshold-value {
+      font-size: 12px;
+      color: #ffff00;
+      min-width: 35px;
+      text-align: right;
+      font-weight: bold;
     }
 
     button {
@@ -245,35 +307,6 @@
       background: #3a7cd2;
     }
 
-    .slider-control {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      background: #222;
-      padding: 8px 12px;
-      border-radius: 4px;
-      flex-shrink: 0;
-    }
-
-    .slider-control label {
-      font-size: 12px;
-      color: #aaa;
-      white-space: nowrap;
-    }
-
-    .slider-control input[type="range"] {
-      width: 80px;
-      height: 24px;
-      cursor: pointer;
-    }
-
-    .slider-control .value {
-      font-size: 12px;
-      color: #ffff00;
-      min-width: 30px;
-      text-align: right;
-    }
-
     #error {
       position: absolute;
       bottom: 10px;
@@ -307,7 +340,7 @@
         スコア: <span id="scoreValue">-</span>
       </div>
       <div class="threshold-display">
-        しきい値: <span id="thresholdValue">50</span>
+        しきい値: <span id="thresholdValue">20</span>
       </div>
     </div>
 
@@ -326,6 +359,23 @@
     </div>
 
     <div class="controls">
+      <div class="threshold-control">
+        <button id="thresholdMinus" class="threshold-button">−</button>
+        <div class="threshold-label">しきい値: <span id="thresholdValueControl">20</span></div>
+        <button id="thresholdPlus" class="threshold-button">+</button>
+        <div class="threshold-slider-wrapper">
+          <input
+            id="thresholdSlider"
+            type="range"
+            min="0"
+            max="100"
+            value="20"
+            disabled
+          />
+          <span class="threshold-value" id="thresholdValueSlider">20</span>
+        </div>
+      </div>
+
       <button id="cameraButton" class="primary">カメラ開始 / 切替</button>
       <button id="rangeSelectButton" class="primary" disabled>範囲選択</button>
       <button id="createFixedRangeButton" class="info" disabled>中央に検査枠を作成</button>
@@ -333,18 +383,6 @@
       <button id="inspectButton" class="warning" disabled>検査開始</button>
       <button id="resetButton" class="danger" disabled>リセット</button>
       <button id="statusCheckButton" class="primary">状態確認</button>
-      <div class="slider-control">
-        <label for="thresholdSlider">しきい値:</label>
-        <input
-          id="thresholdSlider"
-          type="range"
-          min="0"
-          max="100"
-          value="50"
-          disabled
-        />
-        <span class="value" id="thresholdValueSlider">50</span>
-      </div>
     </div>
   </div>
 
@@ -363,7 +401,10 @@
       const resetButton = document.getElementById('resetButton');
       const statusCheckButton = document.getElementById('statusCheckButton');
       const thresholdSlider = document.getElementById('thresholdSlider');
+      const thresholdMinus = document.getElementById('thresholdMinus');
+      const thresholdPlus = document.getElementById('thresholdPlus');
       const thresholdValue = document.getElementById('thresholdValue');
+      const thresholdValueControl = document.getElementById('thresholdValueControl');
       const thresholdValueSlider = document.getElementById('thresholdValueSlider');
       const scoreValue = document.getElementById('scoreValue');
       const statusMessage = document.getElementById('statusMessage');
@@ -431,6 +472,13 @@
         }, 2000);
       }
 
+      function updateThresholdDisplay() {
+        const value = parseInt(thresholdSlider.value, 10);
+        thresholdValue.textContent = value;
+        thresholdValueControl.textContent = value;
+        thresholdValueSlider.textContent = value;
+      }
+
       function updateButtonStates() {
         const hasCameraStream = currentStream !== null;
         const hasSelectedRange = selectedRange !== null;
@@ -442,6 +490,66 @@
         inspectButton.disabled = !hasSelectedRange || !hasOkReference || !hasCameraStream || isProcessing;
         thresholdSlider.disabled = !hasOkReference;
         resetButton.disabled = !hasSelectedRange && !hasOkReference;
+      }
+
+      // ========== RGB to HSV 変換 ==========
+
+      function rgbToHsv(r, g, b) {
+        r /= 255;
+        g /= 255;
+        b /= 255;
+
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const delta = max - min;
+
+        let h = 0;
+        let s = max === 0 ? 0 : delta / max;
+        let v = max;
+
+        if (delta !== 0) {
+          if (max === r) {
+            h = 60 * (((g - b) / delta) % 6);
+          } else if (max === g) {
+            h = 60 * ((b - r) / delta + 2);
+          } else {
+            h = 60 * ((r - g) / delta + 4);
+          }
+        }
+
+        if (h < 0) h += 360;
+
+        return { h, s, v };
+      }
+
+      // ========== 色差分スコア計算 ==========
+
+      function calculateColorDifference(r1, g1, b1, r2, g2, b2) {
+        // RGB差分
+        const rgbDiff = (Math.abs(r1 - r2) + Math.abs(g1 - g2) + Math.abs(b1 - b2)) / 3;
+
+        // HSV変換
+        const hsv1 = rgbToHsv(r1, g1, b1);
+        const hsv2 = rgbToHsv(r2, g2, b2);
+
+        // 色相差分（0-180の範囲に正規化）
+        let hDiff = Math.abs(hsv1.h - hsv2.h);
+        if (hDiff > 180) hDiff = 360 - hDiff;
+        hDiff = hDiff / 180 * 255; // 0-255の範囲に変換
+
+        // 彩度差分
+        const sDiff = Math.abs(hsv1.s - hsv2.s) * 255;
+
+        // 明度差分
+        const vDiff = Math.abs(hsv1.v - hsv2.v) * 255;
+
+        // 複合スコア：色相を強く重視（0.5倍）、彩度と明度は弱く（0.25倍）
+        const colorScore = (hDiff * 0.5 + sDiff * 0.25 + vDiff * 0.25) / 3;
+
+        // RGB + Color複合スコア
+        const totalScore = (rgbDiff * 0.4 + colorScore * 0.6);
+
+        return totalScore;
       }
 
       // ========== 画像処理：グレースケール化とぼかし ==========
@@ -586,7 +694,7 @@
         return new ImageData(averagedData, first.width, first.height);
       }
 
-      // ========== スコア計算 ==========
+      // ========== スコア計算（色差分を強く反映） ==========
 
       function calculateDifferenceScore(referenceImageData, currentImageData) {
         if (!referenceImageData || !currentImageData) {
@@ -601,13 +709,20 @@
           const pixelCount = refData.length / 4;
 
           for (let i = 0; i < refData.length; i += 4) {
-            const diffR = Math.abs(refData[i] - curData[i]);
-            const diffG = Math.abs(refData[i + 1] - curData[i + 1]);
-            const diffB = Math.abs(refData[i + 2] - curData[i + 2]);
+            const r1 = refData[i];
+            const g1 = refData[i + 1];
+            const b1 = refData[i + 2];
 
-            totalDifference += (diffR + diffG + diffB) / 3;
+            const r2 = curData[i];
+            const g2 = curData[i + 1];
+            const b2 = curData[i + 2];
+
+            // 色差分スコア計算（RGB + HSV複合）
+            const colorDiff = calculateColorDifference(r1, g1, b1, r2, g2, b2);
+            totalDifference += colorDiff;
           }
 
+          // 0-100 のスコアに正規化
           const score = Math.min(100, Math.round((totalDifference / pixelCount) * 100 / 255));
           return score;
         } catch (e) {
@@ -966,12 +1081,24 @@
         }
       });
 
-      // ========== しきい値スライダー ==========
+      // ========== しきい値操作 ==========
 
       thresholdSlider.addEventListener('input', (e) => {
-        const value = parseInt(e.target.value, 10);
-        thresholdValue.textContent = value;
-        thresholdValueSlider.textContent = value;
+        updateThresholdDisplay();
+      });
+
+      thresholdMinus.addEventListener('click', () => {
+        let value = parseInt(thresholdSlider.value, 10);
+        value = Math.max(0, value - 5);
+        thresholdSlider.value = value;
+        updateThresholdDisplay();
+      });
+
+      thresholdPlus.addEventListener('click', () => {
+        let value = parseInt(thresholdSlider.value, 10);
+        value = Math.min(100, value + 5);
+        thresholdSlider.value = value;
+        updateThresholdDisplay();
       });
 
       // ========== リセット ==========
@@ -1021,9 +1148,8 @@
       // ========== 初期化 ==========
 
       updateButtonStates();
-      thresholdSlider.value = 50;
-      thresholdValue.textContent = '50';
-      thresholdValueSlider.textContent = '50';
+      thresholdSlider.value = 20;
+      updateThresholdDisplay();
 
     })();
   </script>
