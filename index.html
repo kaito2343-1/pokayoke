@@ -67,6 +67,17 @@
       margin-top: 4px;
     }
 
+    .inspection-result {
+      font-size: 14px;
+      color: #00ff00;
+      margin-top: 6px;
+      line-height: 1.4;
+    }
+
+    .inspection-result.ng {
+      color: #ff6666;
+    }
+
     .video-container {
       position: relative;
       flex: 1;
@@ -339,6 +350,7 @@
       <div class="score-display">
         スコア: <span id="scoreValue">-</span>
       </div>
+      <div class="inspection-result" id="inspectionResult"></div>
       <div class="threshold-display">
         しきい値: <span id="thresholdValue">20</span>
       </div>
@@ -407,6 +419,7 @@
       const thresholdValueControl = document.getElementById('thresholdValueControl');
       const thresholdValueSlider = document.getElementById('thresholdValueSlider');
       const scoreValue = document.getElementById('scoreValue');
+      const inspectionResult = document.getElementById('inspectionResult');
       const statusMessage = document.getElementById('statusMessage');
       const errorDiv = document.getElementById('error');
       const resultOverlay = document.getElementById('resultOverlay');
@@ -419,9 +432,13 @@
       let selectedRange = null; // { x, y, width, height }
       let okReferenceImageData = null;
       let lastScore = null;
+      let lastNgCount = null;
       let cameraWidth = 0;
       let cameraHeight = 0;
       let isProcessing = false;
+
+      const FRAME_COUNT = 15;
+      const FRAME_INTERVAL = 150; // 0.15秒
 
       // ========== ユーティリティ関数 ==========
 
@@ -890,7 +907,7 @@
         updateButtonStates();
       }
 
-      // タッチイベント - キャンバスに直接アタッチ
+      // タッチイベント
       canvas.addEventListener('touchstart', (e) => {
         if (!isRangeSelecting) return;
         e.preventDefault();
@@ -973,7 +990,7 @@
         updateButtonStates();
       });
 
-      // ========== OK基準保存（5枚平均化） ==========
+      // ========== OK基準保存（15枚平均化） ==========
 
       saveOkButton.addEventListener('click', async () => {
         if (!selectedRange || cameraWidth === 0 || cameraHeight === 0) {
@@ -986,25 +1003,23 @@
 
         try {
           const frames = [];
-          const frameCount = 5;
-          const interval = 300; // 0.3秒
 
-          for (let i = 1; i <= frameCount; i++) {
-            showStatus(`OK基準作成中 ${i}/${frameCount}`, 'info');
+          for (let i = 1; i <= FRAME_COUNT; i++) {
+            showStatus(`OK基準作成中 ${i}/${FRAME_COUNT}`, 'info');
             const frameData = captureFrameData();
 
             if (frameData) {
               frames.push(frameData);
             }
 
-            if (i < frameCount) {
-              await new Promise(resolve => setTimeout(resolve, interval));
+            if (i < FRAME_COUNT) {
+              await new Promise(resolve => setTimeout(resolve, FRAME_INTERVAL));
             }
           }
 
-          if (frames.length === frameCount) {
+          if (frames.length === FRAME_COUNT) {
             okReferenceImageData = averageImageData(frames);
-            showStatus('OK基準を保存しました。', 'success');
+            showStatus(`OK基準保存完了 ${FRAME_COUNT}枚`, 'success');
             updateButtonStates();
           } else {
             showStatus('フレーム取得に失敗しました。', 'info');
@@ -1017,7 +1032,7 @@
         }
       });
 
-      // ========== 検査開始（3回平均化） ==========
+      // ========== 検査開始（15枚平均化） ==========
 
       inspectButton.addEventListener('click', async () => {
         if (!selectedRange || !okReferenceImageData) {
@@ -1030,11 +1045,9 @@
 
         try {
           const scores = [];
-          const inspectCount = 3;
-          const interval = 200; // 0.2秒
 
-          for (let i = 1; i <= inspectCount; i++) {
-            showStatus(`検査中 ${i}/${inspectCount}`, 'info');
+          for (let i = 1; i <= FRAME_COUNT; i++) {
+            showStatus(`検査中 ${i}/${FRAME_COUNT}`, 'info');
 
             const frameData = captureFrameData();
             if (frameData) {
@@ -1044,24 +1057,39 @@
               }
             }
 
-            if (i < inspectCount) {
-              await new Promise(resolve => setTimeout(resolve, interval));
+            if (i < FRAME_COUNT) {
+              await new Promise(resolve => setTimeout(resolve, FRAME_INTERVAL));
             }
           }
 
-          if (scores.length === inspectCount) {
-            // 3回の平均スコアを計算
+          if (scores.length === FRAME_COUNT) {
+            // 15枚の平均スコアを計算
             const averageScore = Math.round(
               scores.reduce((a, b) => a + b, 0) / scores.length
             );
 
-            // 3回中2回以上NGなら最終判定はNG
+            // しきい値でOK/NG判定
             const threshold = parseInt(thresholdSlider.value, 10);
+            
+            // NG枚数をカウント
             const ngCount = scores.filter(s => s > threshold).length;
-            const isFinalOk = ngCount < 2; // 2回以上NGなら NG
+            
+            // スコアベース判定：スコア <= しきい値 でOK
+            const isOkByScore = averageScore <= threshold;
+            
+            // 投票ロジック：8枚以上NG なら最終NG
+            const isOkByVote = ngCount < 8;
+            
+            // 最終判定：両方の条件を満たしたらOK
+            const isFinalOk = isOkByScore && isOkByVote;
 
             lastScore = averageScore;
+            lastNgCount = ngCount;
             scoreValue.textContent = averageScore;
+
+            // 結果表示
+            inspectionResult.textContent = `NG枚数: ${ngCount}/${FRAME_COUNT}`;
+            inspectionResult.className = 'inspection-result' + (isFinalOk ? '' : ' ng');
 
             showResult(isFinalOk);
             showStatus(
@@ -1069,7 +1097,7 @@
               isFinalOk ? 'success' : 'info'
             );
 
-            console.log(`検査スコア: ${scores.join(', ')} → 平均: ${averageScore}, NG数: ${ngCount}, 最終判定: ${isFinalOk ? 'OK' : 'NG'}`);
+            console.log(`検査スコア: ${scores.join(', ')} → 平均: ${averageScore}, NG数: ${ngCount}/${FRAME_COUNT}, 最終判定: ${isFinalOk ? 'OK' : 'NG'}`);
           } else {
             showStatus('検査に失敗しました。', 'info');
           }
@@ -1109,7 +1137,10 @@
         selectionStart = null;
         selectionEnd = null;
         lastScore = null;
+        lastNgCount = null;
         scoreValue.textContent = '-';
+        inspectionResult.textContent = '';
+        inspectionResult.className = 'inspection-result';
         resultOverlay.className = 'result-overlay';
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         canvas.classList.remove('active');
@@ -1124,8 +1155,11 @@
         let status = 'ポカヨケ検査アプリ 状態確認\n\n';
         status += `カメラ: ${currentStream ? '起動中' : '未起動'}\n`;
         status += `範囲選択: ${selectedRange ? '完了' : '未選択'}\n`;
-        status += `OK基準: ${okReferenceImageData ? '保存済み（5枚平均）' : '未保存'}\n`;
+        status += `OK基準: ${okReferenceImageData ? `保存済み（${FRAME_COUNT}枚平均）` : '未保存'}\n`;
         status += `最終スコア: ${lastScore !== null ? lastScore : '-'}\n`;
+        if (lastNgCount !== null) {
+          status += `NG枚数: ${lastNgCount}/${FRAME_COUNT}\n`;
+        }
         status += `しきい値: ${thresholdSlider.value}\n`;
         status += `処理中: ${isProcessing ? 'はい' : 'いいえ'}`;
         alert(status);
