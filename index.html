@@ -475,7 +475,7 @@
       let selectionEnd = null;
       let selectedRange = null;
       let okReferenceImageData = null;
-      let okReferenceStats = null; // OK基準の統計情報
+      let okReferenceStats = null;
       let lastScore = null;
       let lastNgCount = null;
       let cameraWidth = 0;
@@ -594,33 +594,68 @@
         return { h, s, v };
       }
 
-      // ========== 画像統計情報を計算 ==========
+      // ========== 色ヒストグラムを計算 ==========
 
-      function calculateImageStats(imageData) {
+      function calculateColorHistogram(imageData, binCount = 16) {
         const data = imageData.data;
-        let totalR = 0, totalG = 0, totalB = 0;
-        let totalH = 0, totalS = 0, totalV = 0;
-        let redCount = 0;
-        let count = 0;
+        const histogram = new Array(binCount * binCount).fill(0); // H-S平面のヒストグラム
 
         for (let i = 0; i < data.length; i += 4) {
           const r = data[i];
           const g = data[i + 1];
           const b = data[i + 2];
 
-          // グレースケール（明度が低い）は除外
           const gray = (r + g + b) / 3;
-          if (gray < 20) continue;
-
-          totalR += r;
-          totalG += g;
-          totalB += b;
+          if (gray < 20) continue; // 暗いピクセルを除外
 
           const hsv = rgbToHsv(r, g, b);
-          totalH += hsv.h;
-          totalS += hsv.s;
-          totalV += hsv.v;
-          count++;
+          
+          // 色相（0-360°）をbinCount分割
+          const hBin = Math.floor((hsv.h / 360) * binCount) % binCount;
+          // 彩度（0-1）をbinCount分割
+          const sBin = Math.floor(hsv.s * binCount) % binCount;
+
+          const index = hBin * binCount + sBin;
+          histogram[index]++;
+        }
+
+        // 正規化
+        const total = histogram.reduce((a, b) => a + b, 0);
+        if (total > 0) {
+          return histogram.map(h => h / total);
+        }
+        return histogram;
+      }
+
+      // ========== ヒストグラム差を計算 ==========
+
+      function calculateHistogramDifference(hist1, hist2) {
+        let diff = 0;
+        for (let i = 0; i < hist1.length; i++) {
+          diff += Math.abs(hist1[i] - hist2[i]);
+        }
+        return diff / 2; // 0-1の範囲に正規化
+      }
+
+      // ========== 画像統計情報を計算 ==========
+
+      function calculateImageStats(imageData) {
+        const data = imageData.data;
+        let redCount = 0;
+        let totalSaturation = 0;
+        let validPixelCount = 0;
+
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+
+          const gray = (r + g + b) / 3;
+          if (gray < 20) continue; // グレースケール、暗いピクセル除外
+
+          const hsv = rgbToHsv(r, g, b);
+          totalSaturation += hsv.s;
+          validPixelCount++;
 
           // 赤色判定（色相が0-30 or 330-360）
           if (hsv.h <= 30 || hsv.h >= 330) {
@@ -628,26 +663,18 @@
           }
         }
 
-        if (count === 0) {
+        if (validPixelCount === 0) {
           return {
-            avgR: 0,
-            avgG: 0,
-            avgB: 0,
-            avgH: 0,
-            avgS: 0,
-            avgV: 0,
-            redRate: 0
+            redRate: 0,
+            avgSaturation: 0,
+            histogram: new Array(16 * 16).fill(0)
           };
         }
 
         return {
-          avgR: totalR / count,
-          avgG: totalG / count,
-          avgB: totalB / count,
-          avgH: totalH / count,
-          avgS: totalS / count,
-          avgV: totalV / count,
-          redRate: (redCount / count) * 100
+          redRate: (redCount / validPixelCount) * 100,
+          avgSaturation: totalSaturation / validPixelCount,
+          histogram: calculateColorHistogram(imageData)
         };
       }
 
@@ -842,11 +869,35 @@
         }
       }
 
+      // ========== HSV風色違い率計算 ==========
+
+      function calculateColorDifferenceRate(okStats, currentStats) {
+        // 色相差（赤色率の差）
+        const hueDiff = Math.abs(okStats.redRate - currentStats.redRate);
+        
+        // 彩度差
+        const saturationDiff = Math.abs(okStats.avgSaturation - currentStats.avgSaturation);
+        
+        // ヒストグラム差
+        const histDiff = calculateHistogramDifference(okStats.histogram, currentStats.histogram);
+
+        // 総合的な色違い率（0-100%）
+        // 赤率差: 最大100%、彩度差: 最大1.0、ヒストグラム差: 最大1.0
+        const colorDiffRate = (hueDiff * 0.5 + saturationDiff * 30 + histDiff * 50);
+
+        return {
+          hueDiff,
+          saturationDiff,
+          histDiff,
+          colorDiffRate: Math.min(100, colorDiffRate)
+        };
+      }
+
       // ========== 厳密な判定ロジック ==========
 
       function performStrictJudgment(scores, frameDataArray) {
         const threshold = parseInt(thresholdSlider.value, 10);
-        
+
         // スコア統計
         const avgScore = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
         const maxScore = Math.max(...scores);
@@ -855,62 +906,54 @@
         // 各フレームの統計情報を計算
         const frameStats = frameDataArray.map(frame => calculateImageStats(frame));
         
-        // 赤色率の統計
+        // 赤率、彩度の統計
         const redRates = frameStats.map(s => s.redRate);
+        const saturations = frameStats.map(s => s.avgSaturation);
         const avgRedRate = redRates.reduce((a, b) => a + b, 0) / redRates.length;
-        const minRedRate = Math.min(...redRates);
-        const maxRedRate = Math.max(...redRates);
-
-        // 彩度の統計
-        const saturations = frameStats.map(s => s.avgS);
         const avgSaturation = saturations.reduce((a, b) => a + b, 0) / saturations.length;
-        const minSaturation = Math.min(...saturations);
+
+        // 平均画像の統計
+        const avgImageData = averageImageData(frameDataArray);
+        const avgStats = calculateImageStats(avgImageData);
 
         // OK基準との比較
         const okStats = okReferenceStats;
         const redRateDiff = okStats.redRate - avgRedRate;
-        const saturationDiff = okStats.avgS - avgSaturation;
+        const saturationDiff = okStats.avgSaturation - avgSaturation;
+        const colorDiffInfo = calculateColorDifferenceRate(okStats, avgStats);
 
-        // ========== 判定条件（厳密） ==========
+        // ========== 判定条件（複合判定） ==========
         let judgment = 'OK';
         let reasons = [];
 
-        // 1. 15枚中1枚でも明らかに違う画像 → NG寄り
-        const outlierThreshold = threshold + 15;
-        const outlierCount = scores.filter(s => s > outlierThreshold).length;
-        if (outlierCount >= 1) {
-          judgment = 'NG';
-          reasons.push(`異常フレーム検出(${outlierCount}枚 score > ${outlierThreshold})`);
-        }
-
-        // 2. 最大スコアがしきい値を超えたら即NG
+        // 1. 最大スコアがしきい値を超えたら即NG
         if (maxScore > threshold) {
           judgment = 'NG';
           reasons.push(`最大スコア(${maxScore}) > しきい値(${threshold})`);
         }
 
-        // 3. 平均スコア自体が高い場合もNG
-        if (avgScore > threshold + 5) {
-          judgment = 'NG';
-          reasons.push(`平均スコア(${avgScore}) > ${threshold + 5}`);
-        }
-
-        // 4. 15枚中3枚以上NGならNG
+        // 2. 15枚中3枚以上がNG
         if (ngCount >= 3) {
           judgment = 'NG';
           reasons.push(`NG枚数(${ngCount}) >= 3`);
         }
 
-        // 5. 赤色率が大きく低下 → 銀色ビール化 NG
-        if (redRateDiff > 25) {
+        // 3. 赤率が大きく低下（銀色ビール、天井など）
+        if (redRateDiff > 20) {
           judgment = 'NG';
-          reasons.push(`赤色率低下(OK:${okStats.redRate.toFixed(1)}% → ${avgRedRate.toFixed(1)}%, 差:${redRateDiff.toFixed(1)}%)`);
+          reasons.push(`赤率低下(基準:${okStats.redRate.toFixed(1)}% → ${avgRedRate.toFixed(1)}%, 差:${redRateDiff.toFixed(1)}%)`);
         }
 
-        // 6. 彩度が大きく低下 → 銀色化 NG
-        if (saturationDiff > 0.3) {
+        // 4. 彩度が大きく低下（銀色化）
+        if (saturationDiff > 0.25) {
           judgment = 'NG';
-          reasons.push(`彩度低下(OK:${okStats.avgS.toFixed(3)} → ${avgSaturation.toFixed(3)}, 差:${saturationDiff.toFixed(3)})`);
+          reasons.push(`彩度低下(基準:${okStats.avgSaturation.toFixed(3)} → ${avgSaturation.toFixed(3)}, 差:${saturationDiff.toFixed(3)})`);
+        }
+
+        // 5. 色ヒストグラムが大きく異なる
+        if (colorDiffInfo.colorDiffRate > 30) {
+          judgment = 'NG';
+          reasons.push(`色違い率(${colorDiffInfo.colorDiffRate.toFixed(1)}%) > 30%`);
         }
 
         return {
@@ -923,12 +966,13 @@
             avgScore,
             maxScore,
             ngCount,
-            avgRedRate: avgRedRate.toFixed(1),
-            okRedRate: okStats.redRate.toFixed(1),
+            baseRedRate: okStats.redRate.toFixed(1),
+            currentRedRate: avgRedRate.toFixed(1),
             redRateDiff: redRateDiff.toFixed(1),
-            avgSaturation: avgSaturation.toFixed(3),
-            okSaturation: okStats.avgS.toFixed(3),
+            baseSaturation: okStats.avgSaturation.toFixed(3),
+            currentSaturation: avgSaturation.toFixed(3),
             saturationDiff: saturationDiff.toFixed(3),
+            colorDiffRate: colorDiffInfo.colorDiffRate.toFixed(1),
             threshold
           }
         };
@@ -941,8 +985,8 @@
 
         const detailsHTML = `
           平均: ${result.stats.avgScore} | 最大: ${result.stats.maxScore} | NG枚数: ${result.stats.ngCount}/15<br>
-          赤色率: ${result.stats.avgRedRate}% (OK基準: ${result.stats.okRedRate}%) | 差: ${result.stats.redRateDiff}%<br>
-          彩度: ${result.stats.avgSaturation} (OK基準: ${result.stats.okSaturation}) | 差: ${result.stats.saturationDiff}
+          基準赤率: ${result.stats.baseRedRate}% | 現在赤率: ${result.stats.currentRedRate}% | 差: ${result.stats.redRateDiff}%<br>
+          彩度差: ${result.stats.saturationDiff} | 色違い率: ${result.stats.colorDiffRate}%
         `;
         scoreDetails.innerHTML = detailsHTML;
 
