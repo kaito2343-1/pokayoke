@@ -596,56 +596,61 @@
 
       // ========== 色ヒストグラムを計算 ==========
 
-      function calculateColorHistogram(imageData, binCount = 16) {
-        const data = imageData.data;
-        const histogram = new Array(binCount * binCount).fill(0); // H-S平面のヒストグラム
+function calculateColorHistogram(imageData, binCount = 16) {
+  const data = imageData.data;
+  const histogram = new Array(binCount * binCount).fill(0); // H-S平面のヒストグラム
 
-        for (let i = 0; i < data.length; i += 4) {
-          const r = data[i];
-          const g = data[i + 1];
-          const b = data[i + 2];
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
 
-          const gray = (r + g + b) / 3;
-          if (gray < 20) continue; // 暗いピクセルを除外
+    const gray = (r + g + b) / 3;
+    if (gray < 20) continue; // 暗いピクセルを除外
 
-          const hsv = rgbToHsv(r, g, b);
-          
-          // 色相（0-360°）をbinCount分割
-          const sBin = Math.min(
-  binCount - 1,
-  Math.floor(hsv.s * binCount)
-);
-          // 彩度（0-1）をbinCount分割
-          const sBin = Math.min(
-  binCount - 1,
-  Math.floor(hsv.s * binCount)
-);
+    const hsv = rgbToHsv(r, g, b);
 
-          const index = hBin * binCount + sBin;
-          histogram[index]++;
-        }
+    // 色相（0-360°）をbinCount分割
+    const hBin = Math.min(
+      binCount - 1,
+      Math.floor((hsv.h / 360) * binCount)
+    );
 
-        // 正規化
-        const total = histogram.reduce((a, b) => a + b, 0);
-        if (total > 0) {
-          return histogram.map(h => h / total);
-        }
-        return histogram;
-      }
+    // 彩度（0-1）をbinCount分割
+    const sBin = Math.min(
+      binCount - 1,
+      Math.floor(hsv.s * binCount)
+    );
 
-      // ========== ヒストグラム差を計算 ==========
+    const index = hBin * binCount + sBin;
+    histogram[index]++;
+  }
 
-      function calculateHistogramDifference(hist1, hist2) {
-        let diff = 0;
-        for (let i = 0; i < hist1.length; i++) {
-          diff += Math.abs(hist1[i] - hist2[i]);
-        }
-        return diff / 2; // 0-1の範囲に正規化
-      }
+  // 正規化
+  const total = histogram.reduce((a, b) => a + b, 0);
 
-      // ========== 画像統計情報を計算 ==========
+  if (total > 0) {
+    return histogram.map(h => h / total);
+  }
 
-    function calculateImageStats(imageData) {
+  return histogram;
+}
+
+// ========== ヒストグラム差を計算 ==========
+
+function calculateHistogramDifference(hist1, hist2) {
+  let diff = 0;
+
+  for (let i = 0; i < hist1.length; i++) {
+    diff += Math.abs(hist1[i] - hist2[i]);
+  }
+
+  return diff / 2; // 0-1の範囲に正規化
+}
+
+// ========== 画像統計情報を計算 ==========
+
+function calculateImageStats(imageData) {
   const data = imageData.data;
   let redCount = 0;
   let totalSaturation = 0;
