@@ -100,6 +100,13 @@
       touch-action: none;
     }
 
+    #videoCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      touch-action: none;
+    }
+
     #selectionCanvas {
       position: absolute;
       top: 0;
@@ -152,6 +159,15 @@
       }
     }
 
+    @keyframes blink {
+      0%, 50% {
+        opacity: 1;
+      }
+      51%, 100% {
+        opacity: 0.3;
+      }
+    }
+
     .status-message {
       position: absolute;
       top: 10px;
@@ -178,6 +194,27 @@
     .status-message.success {
       background: rgba(100, 200, 100, 0.7);
       color: #ccffcc;
+    }
+
+    .progress-display {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 32px;
+      font-weight: bold;
+      color: #ffff00;
+      text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.8);
+      z-index: 40;
+      pointer-events: none;
+      display: none;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 16px 24px;
+      border-radius: 8px;
+    }
+
+    .progress-display.show {
+      display: block;
     }
 
     .controls {
@@ -364,7 +401,9 @@
         muted
         webkit-playsinline="true"
       ></video>
+      <canvas id="videoCanvas"></canvas>
       <canvas id="selectionCanvas"></canvas>
+      <div id="progressDisplay" class="progress-display"></div>
       <div id="resultOverlay" class="result-overlay"></div>
       <div id="statusMessage" class="status-message"></div>
       <div id="error"></div>
@@ -403,8 +442,10 @@
       // ========== DOM要素 ==========
       const videoContainer = document.getElementById('videoContainer');
       const video = document.getElementById('video');
-      const canvas = document.getElementById('selectionCanvas');
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const videoCanvas = document.getElementById('videoCanvas');
+      const videoCtx = videoCanvas.getContext('2d', { willReadFrequently: true });
+      const selectionCanvas = document.getElementById('selectionCanvas');
+      const selectionCtx = selectionCanvas.getContext('2d', { willReadFrequently: true });
       const cameraButton = document.getElementById('cameraButton');
       const rangeSelectButton = document.getElementById('rangeSelectButton');
       const createFixedRangeButton = document.getElementById('createFixedRangeButton');
@@ -420,6 +461,7 @@
       const thresholdValueSlider = document.getElementById('thresholdValueSlider');
       const scoreValue = document.getElementById('scoreValue');
       const inspectionResult = document.getElementById('inspectionResult');
+      const progressDisplay = document.getElementById('progressDisplay');
       const statusMessage = document.getElementById('statusMessage');
       const errorDiv = document.getElementById('error');
       const resultOverlay = document.getElementById('resultOverlay');
@@ -436,6 +478,7 @@
       let cameraWidth = 0;
       let cameraHeight = 0;
       let isProcessing = false;
+      let isInspecting = false;
 
       const FRAME_COUNT = 15;
       const FRAME_INTERVAL = 150; // 0.15秒
@@ -487,6 +530,15 @@
         setTimeout(() => {
           resultOverlay.className = 'result-overlay';
         }, 2000);
+      }
+
+      function showProgress(current, total, type = '検査中') {
+        progressDisplay.textContent = `${type} ${current}/${total}`;
+        progressDisplay.classList.add('show');
+      }
+
+      function hideProgress() {
+        progressDisplay.classList.remove('show');
       }
 
       function updateThresholdDisplay() {
@@ -711,7 +763,7 @@
         return new ImageData(averagedData, first.width, first.height);
       }
 
-      // ========== スコア計算（色差分を強く反映） ==========
+      // ========== スコア計算 ==========
 
       function calculateDifferenceScore(referenceImageData, currentImageData) {
         if (!referenceImageData || !currentImageData) {
@@ -748,6 +800,93 @@
         }
       }
 
+      // ========== 検査範囲の描画（オーバーレイ）==========
+
+      function drawRangeOverlay(drawingCtx, isInspecting = false) {
+        if (!selectedRange || cameraWidth === 0 || cameraHeight === 0) {
+          return;
+        }
+
+        // キャンバスサイズをビデオサイズに合わせる
+        const rect = video.getBoundingClientRect();
+        const scaleX = cameraWidth / video.videoWidth;
+        const scaleY = cameraHeight / video.videoHeight;
+
+        const displayX = selectedRange.x / scaleX;
+        const displayY = selectedRange.y / scaleY;
+        const displayWidth = selectedRange.width / scaleX;
+        const displayHeight = selectedRange.height / scaleY;
+
+        // 背景をクリア
+        drawingCtx.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
+
+        // 選択範囲外を暗くする
+        drawingCtx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        
+        // 上
+        drawingCtx.fillRect(0, 0, videoCanvas.width, displayY);
+        
+        // 下
+        drawingCtx.fillRect(0, displayY + displayHeight, videoCanvas.width, videoCanvas.height - (displayY + displayHeight));
+        
+        // 左
+        drawingCtx.fillRect(0, displayY, displayX, displayHeight);
+        
+        // 右
+        drawingCtx.fillRect(displayX + displayWidth, displayY, videoCanvas.width - (displayX + displayWidth), displayHeight);
+
+        // 検査範囲の枠を描画
+        if (isInspecting) {
+          // 検査中：太い枠＋点滅
+          drawingCtx.strokeStyle = '#ffff00';
+          drawingCtx.lineWidth = 6;
+          drawingCtx.setLineDash([]);
+          drawingCtx.strokeRect(displayX, displayY, displayWidth, displayHeight);
+
+          // テキスト：「検査中」「検査範囲」
+          drawingCtx.fillStyle = '#ffff00';
+          drawingCtx.font = 'bold 18px sans-serif';
+          drawingCtx.textAlign = 'center';
+          drawingCtx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+          drawingCtx.shadowBlur = 4;
+          drawingCtx.shadowOffsetX = 0;
+          drawingCtx.shadowOffsetY = 0;
+
+          // 上部に「検査中」
+          drawingCtx.fillText('検査中', displayX + displayWidth / 2, displayY - 30);
+          
+          // 下部に「検査範囲」
+          drawingCtx.fillText('検査範囲', displayX + displayWidth / 2, displayY + displayHeight + 35);
+        } else {
+          // 通常：普通の枠
+          drawingCtx.strokeStyle = '#ffff00';
+          drawingCtx.lineWidth = 4;
+          drawingCtx.setLineDash([]);
+          drawingCtx.strokeRect(displayX, displayY, displayWidth, displayHeight);
+        }
+      }
+
+      // ========== 描画ループ ==========
+
+      function startDrawingLoop() {
+        function draw() {
+          if (cameraWidth === 0 || cameraHeight === 0) {
+            requestAnimationFrame(draw);
+            return;
+          }
+
+          // videoCanvasのサイズを更新
+          const rect = video.getBoundingClientRect();
+          videoCanvas.width = rect.width;
+          videoCanvas.height = rect.height;
+
+          drawRangeOverlay(videoCtx, isInspecting);
+
+          requestAnimationFrame(draw);
+        }
+        draw();
+      }
+
       // ========== カメラ起動 ==========
 
       async function startCameraWithConstraints(constraints) {
@@ -768,9 +907,10 @@
             () => {
               cameraWidth = video.videoWidth;
               cameraHeight = video.videoHeight;
-              canvas.width = cameraWidth;
-              canvas.height = cameraHeight;
+              selectionCanvas.width = cameraWidth;
+              selectionCanvas.height = cameraHeight;
               console.log(`Video loaded: ${cameraWidth}x${cameraHeight}`);
+              startDrawingLoop();
             },
             { once: true }
           );
@@ -832,28 +972,8 @@
 
       // ========== 範囲選択機能 ==========
 
-      function drawSelection() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        if (selectedRange) {
-          // 保存済み範囲を黄色の実線で描画
-          ctx.strokeStyle = '#ffff00';
-          ctx.lineWidth = 4;
-          ctx.strokeRect(
-            selectedRange.x,
-            selectedRange.y,
-            selectedRange.width,
-            selectedRange.height
-          );
-
-          ctx.fillStyle = 'rgba(255, 255, 0, 0.08)';
-          ctx.fillRect(
-            selectedRange.x,
-            selectedRange.y,
-            selectedRange.width,
-            selectedRange.height
-          );
-        }
+      function drawSelectionGuide() {
+        selectionCtx.clearRect(0, 0, selectionCanvas.width, selectionCanvas.height);
 
         if (isRangeSelecting && selectionStart && selectionEnd) {
           // 選択中の範囲を緑の点線で描画
@@ -862,20 +982,20 @@
           const width = Math.abs(selectionEnd.x - selectionStart.x);
           const height = Math.abs(selectionEnd.y - selectionStart.y);
 
-          ctx.strokeStyle = '#00ff00';
-          ctx.lineWidth = 3;
-          ctx.setLineDash([8, 4]);
-          ctx.strokeRect(x, y, width, height);
-          ctx.setLineDash([]);
+          selectionCtx.strokeStyle = '#00ff00';
+          selectionCtx.lineWidth = 3;
+          selectionCtx.setLineDash([8, 4]);
+          selectionCtx.strokeRect(x, y, width, height);
+          selectionCtx.setLineDash([]);
 
-          ctx.fillStyle = 'rgba(0, 255, 0, 0.08)';
-          ctx.fillRect(x, y, width, height);
+          selectionCtx.fillStyle = 'rgba(0, 255, 0, 0.08)';
+          selectionCtx.fillRect(x, y, width, height);
         }
       }
 
       function startRangeSelection() {
         isRangeSelecting = true;
-        canvas.classList.add('active');
+        selectionCanvas.classList.add('active');
         selectionStart = null;
         selectionEnd = null;
         showStatus('範囲を選択してください。指でドラッグしてください。', 'info');
@@ -891,66 +1011,63 @@
           if (width > 50 && height > 50) {
             selectedRange = { x, y, width, height };
             showStatus('範囲を選択しました。', 'success');
-            drawSelection();
           } else {
             showStatus('範囲が小さすぎます。50px以上の範囲を選択してください。', 'info');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
           }
-        } else {
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
         }
 
         isRangeSelecting = false;
-        canvas.classList.remove('active');
+        selectionCanvas.classList.remove('active');
+        selectionCtx.clearRect(0, 0, selectionCanvas.width, selectionCanvas.height);
         selectionStart = null;
         selectionEnd = null;
         updateButtonStates();
       }
 
       // タッチイベント
-      canvas.addEventListener('touchstart', (e) => {
+      selectionCanvas.addEventListener('touchstart', (e) => {
         if (!isRangeSelecting) return;
         e.preventDefault();
         e.stopPropagation();
 
-        const rect = canvas.getBoundingClientRect();
+        const rect = selectionCanvas.getBoundingClientRect();
         const touch = e.touches[0];
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
+        const scaleX = selectionCanvas.width / rect.width;
+        const scaleY = selectionCanvas.height / rect.height;
 
         selectionStart = {
           x: (touch.clientX - rect.left) * scaleX,
           y: (touch.clientY - rect.top) * scaleY
         };
         selectionEnd = { ...selectionStart };
-        drawSelection();
+        drawSelectionGuide();
       }, { passive: false });
 
-      canvas.addEventListener('touchmove', (e) => {
+      selectionCanvas.addEventListener('touchmove', (e) => {
         if (!isRangeSelecting || !selectionStart) return;
         e.preventDefault();
         e.stopPropagation();
 
-        const rect = canvas.getBoundingClientRect();
+        const rect = selectionCanvas.getBoundingClientRect();
         const touch = e.touches[0];
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
+        const scaleX = selectionCanvas.width / rect.width;
+        const scaleY = selectionCanvas.height / rect.height;
 
         selectionEnd = {
           x: (touch.clientX - rect.left) * scaleX,
           y: (touch.clientY - rect.top) * scaleY
         };
-        drawSelection();
+        drawSelectionGuide();
       }, { passive: false });
 
-      canvas.addEventListener('touchend', (e) => {
+      selectionCanvas.addEventListener('touchend', (e) => {
         if (!isRangeSelecting) return;
         e.preventDefault();
         e.stopPropagation();
         endRangeSelection();
       }, { passive: false });
 
-      canvas.addEventListener('touchcancel', (e) => {
+      selectionCanvas.addEventListener('touchcancel', (e) => {
         if (!isRangeSelecting) return;
         e.preventDefault();
         e.stopPropagation();
@@ -969,7 +1086,6 @@
           return;
         }
 
-        // 画面中央に240x240の検査枠を作成
         const frameSize = 240;
         const x = Math.max(0, (cameraWidth - frameSize) / 2);
         const y = Math.max(0, (cameraHeight - frameSize) / 2);
@@ -982,10 +1098,10 @@
         };
 
         isRangeSelecting = false;
-        canvas.classList.remove('active');
+        selectionCanvas.classList.remove('active');
         selectionStart = null;
         selectionEnd = null;
-        drawSelection();
+        selectionCtx.clearRect(0, 0, selectionCanvas.width, selectionCanvas.height);
         showStatus('画面中央に検査枠を作成しました。', 'success');
         updateButtonStates();
       });
@@ -1005,7 +1121,7 @@
           const frames = [];
 
           for (let i = 1; i <= FRAME_COUNT; i++) {
-            showStatus(`OK基準作成中 ${i}/${FRAME_COUNT}`, 'info');
+            showProgress(i, FRAME_COUNT, 'OK基準作成中');
             const frameData = captureFrameData();
 
             if (frameData) {
@@ -1017,6 +1133,8 @@
             }
           }
 
+          hideProgress();
+
           if (frames.length === FRAME_COUNT) {
             okReferenceImageData = averageImageData(frames);
             showStatus(`OK基準保存完了 ${FRAME_COUNT}枚`, 'success');
@@ -1026,6 +1144,7 @@
           }
         } catch (e) {
           showError('OK基準の保存に失敗しました: ' + e.message);
+          hideProgress();
         } finally {
           isProcessing = false;
           updateButtonStates();
@@ -1041,13 +1160,14 @@
         }
 
         isProcessing = true;
+        isInspecting = true;
         updateButtonStates();
 
         try {
           const scores = [];
 
           for (let i = 1; i <= FRAME_COUNT; i++) {
-            showStatus(`検査中 ${i}/${FRAME_COUNT}`, 'info');
+            showProgress(i, FRAME_COUNT, '検査中');
 
             const frameData = captureFrameData();
             if (frameData) {
@@ -1061,6 +1181,9 @@
               await new Promise(resolve => setTimeout(resolve, FRAME_INTERVAL));
             }
           }
+
+          hideProgress();
+          isInspecting = false;
 
           if (scores.length === FRAME_COUNT) {
             // 15枚の平均スコアを計算
@@ -1103,8 +1226,10 @@
           }
         } catch (e) {
           showError('検査処理に失敗しました: ' + e.message);
+          hideProgress();
         } finally {
           isProcessing = false;
+          isInspecting = false;
           updateButtonStates();
         }
       });
@@ -1138,13 +1263,15 @@
         selectionEnd = null;
         lastScore = null;
         lastNgCount = null;
+        isInspecting = false;
         scoreValue.textContent = '-';
         inspectionResult.textContent = '';
         inspectionResult.className = 'inspection-result';
         resultOverlay.className = 'result-overlay';
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        canvas.classList.remove('active');
-        isRangeSelecting = false;
+        videoCtx.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
+        selectionCtx.clearRect(0, 0, selectionCanvas.width, selectionCanvas.height);
+        selectionCanvas.classList.remove('active');
+        hideProgress();
         showStatus('リセットしました。', 'success');
         updateButtonStates();
       });
@@ -1174,7 +1301,7 @@
       // ========== スクロール防止 ==========
 
       document.addEventListener('touchmove', (e) => {
-        if (e.target === canvas || e.target === video || e.target === videoContainer) {
+        if (e.target === selectionCanvas || e.target === videoCanvas || e.target === video || e.target === videoContainer) {
           e.preventDefault();
         }
       }, { passive: false });
