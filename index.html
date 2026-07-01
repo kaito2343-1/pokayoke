@@ -49,7 +49,7 @@
     .top-info {
       background: #222;
       padding: 12px 16px;
-      font-size: 14px;
+      font-size: 13px;
       text-align: center;
       border-bottom: 1px solid #444;
       flex-shrink: 0;
@@ -59,11 +59,18 @@
       font-size: 18px;
       font-weight: bold;
       color: #ffff00;
+      line-height: 1.2;
+    }
+
+    .score-details {
+      font-size: 11px;
+      color: #aaa;
+      margin-top: 4px;
       line-height: 1.3;
     }
 
     .threshold-display {
-      font-size: 14px;
+      font-size: 12px;
       color: #aaa;
       margin-top: 4px;
     }
@@ -73,6 +80,7 @@
       color: #00ff00;
       margin-top: 6px;
       line-height: 1.4;
+      font-weight: bold;
     }
 
     .inspection-result.ng {
@@ -157,15 +165,6 @@
       100% {
         transform: translate(-50%, -50%) scale(1);
         opacity: 1;
-      }
-    }
-
-    @keyframes blink {
-      0%, 50% {
-        opacity: 1;
-      }
-      51%, 100% {
-        opacity: 0.3;
       }
     }
 
@@ -387,11 +386,11 @@
     <div class="top-info">
       <div class="score-display">
         スコア: <span id="scoreValue">-</span>
-        <div id="scoreDetails" style="font-size: 12px; color: #aaa; margin-top: 4px; display: none;"></div>
       </div>
+      <div class="score-details" id="scoreDetails"></div>
       <div class="inspection-result" id="inspectionResult"></div>
       <div class="threshold-display">
-        しきい値: <span id="thresholdValue">20</span>
+        しきい値: <span id="thresholdValue">10</span>
       </div>
     </div>
 
@@ -414,7 +413,7 @@
     <div class="controls">
       <div class="threshold-control">
         <button id="thresholdMinus" class="threshold-button">−</button>
-        <div class="threshold-label">しきい値: <span id="thresholdValueControl">20</span></div>
+        <div class="threshold-label">しきい値: <span id="thresholdValueControl">10</span></div>
         <button id="thresholdPlus" class="threshold-button">+</button>
         <div class="threshold-slider-wrapper">
           <input
@@ -422,10 +421,10 @@
             type="range"
             min="0"
             max="100"
-            value="20"
+            value="10"
             disabled
           />
-          <span class="threshold-value" id="thresholdValueSlider">20</span>
+          <span class="threshold-value" id="thresholdValueSlider">10</span>
         </div>
       </div>
 
@@ -474,9 +473,9 @@
       let isRangeSelecting = false;
       let selectionStart = null;
       let selectionEnd = null;
-      let selectedRange = null; // { x, y, width, height }
+      let selectedRange = null;
       let okReferenceImageData = null;
-      let okReferenceHSV = null; // OK基準のHSV統計
+      let okReferenceStats = null; // OK基準の統計情報
       let lastScore = null;
       let lastNgCount = null;
       let cameraWidth = 0;
@@ -485,7 +484,7 @@
       let isInspecting = false;
 
       const FRAME_COUNT = 15;
-      const FRAME_INTERVAL = 150; // 0.15秒
+      const FRAME_INTERVAL = 150;
 
       // ========== ユーティリティ関数 ==========
 
@@ -595,13 +594,13 @@
         return { h, s, v };
       }
 
-      // ========== 画像のHSV統計を計算 ==========
+      // ========== 画像統計情報を計算 ==========
 
-      function calculateImageHSVStats(imageData) {
+      function calculateImageStats(imageData) {
         const data = imageData.data;
+        let totalR = 0, totalG = 0, totalB = 0;
         let totalH = 0, totalS = 0, totalV = 0;
-        let hsvCount = 0;
-        let redCount = 0; // 赤色（h: 0-30 or 330-360）
+        let redCount = 0;
         let count = 0;
 
         for (let i = 0; i < data.length; i += 4) {
@@ -612,6 +611,10 @@
           // グレースケール（明度が低い）は除外
           const gray = (r + g + b) / 3;
           if (gray < 20) continue;
+
+          totalR += r;
+          totalG += g;
+          totalB += b;
 
           const hsv = rgbToHsv(r, g, b);
           totalH += hsv.h;
@@ -626,13 +629,24 @@
         }
 
         if (count === 0) {
-          return { h: 0, s: 0, v: 0, redRate: 0 };
+          return {
+            avgR: 0,
+            avgG: 0,
+            avgB: 0,
+            avgH: 0,
+            avgS: 0,
+            avgV: 0,
+            redRate: 0
+          };
         }
 
         return {
-          h: totalH / count,
-          s: totalS / count,
-          v: totalV / count,
+          avgR: totalR / count,
+          avgG: totalG / count,
+          avgB: totalB / count,
+          avgH: totalH / count,
+          avgS: totalS / count,
+          avgV: totalV / count,
           redRate: (redCount / count) * 100
         };
       }
@@ -640,41 +654,31 @@
       // ========== 色差分スコア計算 ==========
 
       function calculateColorDifference(r1, g1, b1, r2, g2, b2) {
-        // RGB差分
         const rgbDiff = (Math.abs(r1 - r2) + Math.abs(g1 - g2) + Math.abs(b1 - b2)) / 3;
 
-        // HSV変換
         const hsv1 = rgbToHsv(r1, g1, b1);
         const hsv2 = rgbToHsv(r2, g2, b2);
 
-        // 色相差分（0-180の範囲に正規化）
         let hDiff = Math.abs(hsv1.h - hsv2.h);
         if (hDiff > 180) hDiff = 360 - hDiff;
-        hDiff = hDiff / 180 * 255; // 0-255の範囲に変換
+        hDiff = hDiff / 180 * 255;
 
-        // 彩度差分
         const sDiff = Math.abs(hsv1.s - hsv2.s) * 255;
-
-        // 明度差分
         const vDiff = Math.abs(hsv1.v - hsv2.v) * 255;
 
-        // 複合スコア：色相を強く重視（0.5倍）、彩度と明度は弱く（0.25倍）
         const colorScore = (hDiff * 0.5 + sDiff * 0.25 + vDiff * 0.25) / 3;
-
-        // RGB + Color複合スコア
         const totalScore = (rgbDiff * 0.4 + colorScore * 0.6);
 
         return totalScore;
       }
 
-      // ========== 画像処理：グレースケール化とぼかし ==========
+      // ========== 画像処理 ==========
 
       function applyImageProcessing(imageData) {
         const data = imageData.data;
         const width = imageData.width;
         const height = imageData.height;
 
-        // ステップ1: グレースケール化
         const grayscaleData = new Uint8ClampedArray(data.length);
         for (let i = 0; i < data.length; i += 4) {
           const r = data[i];
@@ -690,13 +694,8 @@
           grayscaleData[i + 3] = a;
         }
 
-        // ステップ2: ぼかし処理（3x3 ガウシアンフィルタ）
         const blurredData = new Uint8ClampedArray(grayscaleData.length);
-        const kernel = [
-          1, 2, 1,
-          2, 4, 2,
-          1, 2, 1
-        ];
+        const kernel = [1, 2, 1, 2, 4, 2, 1, 2, 1];
         const kernelSum = 16;
 
         for (let y = 1; y < height - 1; y++) {
@@ -722,7 +721,6 @@
           }
         }
 
-        // 端のピクセルをコピー
         for (let i = 0; i < width; i++) {
           const topIdx = i * 4;
           const bottomIdx = ((height - 1) * width + i) * 4;
@@ -752,7 +750,7 @@
         return new ImageData(blurredData, width, height);
       }
 
-      // ========== フレーム取得と処理 ==========
+      // ========== フレーム取得 ==========
 
       function captureFrameData() {
         if (!selectedRange || cameraWidth === 0 || cameraHeight === 0) {
@@ -832,12 +830,10 @@
             const g2 = curData[i + 1];
             const b2 = curData[i + 2];
 
-            // 色差分スコア計算（RGB + HSV複合）
             const colorDiff = calculateColorDifference(r1, g1, b1, r2, g2, b2);
             totalDifference += colorDiff;
           }
 
-          // 0-100 のスコアに正規化
           const score = Math.min(100, Math.round((totalDifference / pixelCount) * 100 / 255));
           return score;
         } catch (e) {
@@ -846,72 +842,75 @@
         }
       }
 
-      // ========== 強化版判定ロジック ==========
+      // ========== 厳密な判定ロジック ==========
 
-      function performEnhancedJudgment(scores, currentImageData) {
+      function performStrictJudgment(scores, frameDataArray) {
         const threshold = parseInt(thresholdSlider.value, 10);
         
         // スコア統計
         const avgScore = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
         const maxScore = Math.max(...scores);
         const ngCount = scores.filter(s => s > threshold).length;
-        
-        // 色差分率（OK基準と異なる色の割合）
-        const currentHSV = calculateImageHSVStats(currentImageData);
-        const okHSV = okReferenceHSV;
-        
-        // 赤色率の差分
-        const redRateDiff = Math.abs(currentHSV.redRate - okHSV.redRate);
-        
-        // 彩度の差分
-        const saturationDiff = Math.abs(currentHSV.s - okHSV.s);
-        
-        // 色相の差分（赤色域での判定）
-        let hueDiff = Math.abs(currentHSV.h - okHSV.h);
-        if (hueDiff > 180) hueDiff = 360 - hueDiff;
-        
-        // 色違い率（OK基準と異なる色が多い場合）
-        const colorDifferenceRate = redRateDiff; // %単位
 
-        // ========== 判定条件（どれか1つでも当てはまればNG）==========
+        // 各フレームの統計情報を計算
+        const frameStats = frameDataArray.map(frame => calculateImageStats(frame));
+        
+        // 赤色率の統計
+        const redRates = frameStats.map(s => s.redRate);
+        const avgRedRate = redRates.reduce((a, b) => a + b, 0) / redRates.length;
+        const minRedRate = Math.min(...redRates);
+        const maxRedRate = Math.max(...redRates);
+
+        // 彩度の統計
+        const saturations = frameStats.map(s => s.avgS);
+        const avgSaturation = saturations.reduce((a, b) => a + b, 0) / saturations.length;
+        const minSaturation = Math.min(...saturations);
+
+        // OK基準との比較
+        const okStats = okReferenceStats;
+        const redRateDiff = okStats.redRate - avgRedRate;
+        const saturationDiff = okStats.avgS - avgSaturation;
+
+        // ========== 判定条件（厳密） ==========
         let judgment = 'OK';
         let reasons = [];
 
-        // 1. 平均スコア > しきい値
-        if (avgScore > threshold) {
+        // 1. 15枚中1枚でも明らかに違う画像 → NG寄り
+        const outlierThreshold = threshold + 15;
+        const outlierCount = scores.filter(s => s > outlierThreshold).length;
+        if (outlierCount >= 1) {
           judgment = 'NG';
-          reasons.push(`平均スコア(${avgScore}) > しきい値(${threshold})`);
+          reasons.push(`異常フレーム検出(${outlierCount}枚 score > ${outlierThreshold})`);
         }
 
-        // 2. 15枚中3枚以上がNG
+        // 2. 最大スコアがしきい値を超えたら即NG
+        if (maxScore > threshold) {
+          judgment = 'NG';
+          reasons.push(`最大スコア(${maxScore}) > しきい値(${threshold})`);
+        }
+
+        // 3. 平均スコア自体が高い場合もNG
+        if (avgScore > threshold + 5) {
+          judgment = 'NG';
+          reasons.push(`平均スコア(${avgScore}) > ${threshold + 5}`);
+        }
+
+        // 4. 15枚中3枚以上NGならNG
         if (ngCount >= 3) {
           judgment = 'NG';
           reasons.push(`NG枚数(${ngCount}) >= 3`);
         }
 
-        // 3. 最大スコア >= しきい値+10
-        if (maxScore >= threshold + 10) {
+        // 5. 赤色率が大きく低下 → 銀色ビール化 NG
+        if (redRateDiff > 25) {
           judgment = 'NG';
-          reasons.push(`最大スコア(${maxScore}) >= ${threshold + 10}`);
+          reasons.push(`赤色率低下(OK:${okStats.redRate.toFixed(1)}% → ${avgRedRate.toFixed(1)}%, 差:${redRateDiff.toFixed(1)}%)`);
         }
 
-        // 4. 色違い率が20%以上
-        if (colorDifferenceRate >= 20) {
+        // 6. 彩度が大きく低下 → 銀色化 NG
+        if (saturationDiff > 0.3) {
           judgment = 'NG';
-          reasons.push(`色違い率(${colorDifferenceRate.toFixed(1)}%) >= 20%`);
-        }
-
-        // 5. 赤色率または彩度がOK基準と大きく違う
-        // 赤色が大きく減った（銀色に変わった）場合NG
-        if (currentHSV.redRate < okHSV.redRate - 30) {
-          judgment = 'NG';
-          reasons.push(`赤色率が低下(OK:${okHSV.redRate.toFixed(1)}% → 現在:${currentHSV.redRate.toFixed(1)}%)`);
-        }
-
-        // 彩度が大きく低下（銀色ビール化）場合NG
-        if (saturationDiff > 0.35) {
-          judgment = 'NG';
-          reasons.push(`彩度が大きく異なる(差分:${saturationDiff.toFixed(3)})`);
+          reasons.push(`彩度低下(OK:${okStats.avgS.toFixed(3)} → ${avgSaturation.toFixed(3)}, 差:${saturationDiff.toFixed(3)})`);
         }
 
         return {
@@ -919,17 +918,18 @@
           avgScore,
           maxScore,
           ngCount,
-          colorDifferenceRate,
           reasons,
           stats: {
             avgScore,
             maxScore,
             ngCount,
-            colorDifferenceRate: colorDifferenceRate.toFixed(1),
-            currentRedRate: currentHSV.redRate.toFixed(1),
-            okRedRate: okHSV.redRate.toFixed(1),
-            currentSaturation: currentHSV.s.toFixed(3),
-            okSaturation: okHSV.s.toFixed(3)
+            avgRedRate: avgRedRate.toFixed(1),
+            okRedRate: okStats.redRate.toFixed(1),
+            redRateDiff: redRateDiff.toFixed(1),
+            avgSaturation: avgSaturation.toFixed(3),
+            okSaturation: okStats.avgS.toFixed(3),
+            saturationDiff: saturationDiff.toFixed(3),
+            threshold
           }
         };
       }
@@ -938,34 +938,30 @@
 
       function updateScoreDisplay(result) {
         scoreValue.textContent = result.avgScore;
-        
-        // 詳細表示
+
         const detailsHTML = `
-          平均: ${result.stats.avgScore} | 最大: ${result.stats.maxScore} | 
-          NG枚数: ${result.stats.ngCount}/15 | 色違い率: ${result.stats.colorDifferenceRate}%<br>
-          赤率: ${result.stats.currentRedRate}% | 彩度: ${result.stats.currentSaturation}
+          平均: ${result.stats.avgScore} | 最大: ${result.stats.maxScore} | NG枚数: ${result.stats.ngCount}/15<br>
+          赤色率: ${result.stats.avgRedRate}% (OK基準: ${result.stats.okRedRate}%) | 差: ${result.stats.redRateDiff}%<br>
+          彩度: ${result.stats.avgSaturation} (OK基準: ${result.stats.okSaturation}) | 差: ${result.stats.saturationDiff}
         `;
         scoreDetails.innerHTML = detailsHTML;
-        scoreDetails.style.display = 'block';
 
-        // 判定結果を表示
         if (result.reasons.length > 0) {
           inspectionResult.textContent = result.reasons.join(' / ');
           inspectionResult.classList.add('ng');
         } else {
-          inspectionResult.textContent = 'OK';
+          inspectionResult.textContent = 'OK（基準と一致）';
           inspectionResult.classList.remove('ng');
         }
       }
 
-      // ========== 検査範囲の描画（オーバーレイ）==========
+      // ========== 検査範囲描画 ==========
 
       function drawRangeOverlay(drawingCtx, isInspecting = false) {
         if (!selectedRange || cameraWidth === 0 || cameraHeight === 0) {
           return;
         }
 
-        // キャンバスサイズをビデオサイズに合わせる
         const rect = video.getBoundingClientRect();
         const scaleX = cameraWidth / video.videoWidth;
         const scaleY = cameraHeight / video.videoHeight;
@@ -975,33 +971,20 @@
         const displayWidth = selectedRange.width / scaleX;
         const displayHeight = selectedRange.height / scaleY;
 
-        // 背景をクリア
         drawingCtx.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
 
-        // 選択範囲外を暗くする
         drawingCtx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-        
-        // 上
         drawingCtx.fillRect(0, 0, videoCanvas.width, displayY);
-        
-        // 下
         drawingCtx.fillRect(0, displayY + displayHeight, videoCanvas.width, videoCanvas.height - (displayY + displayHeight));
-        
-        // 左
         drawingCtx.fillRect(0, displayY, displayX, displayHeight);
-        
-        // 右
         drawingCtx.fillRect(displayX + displayWidth, displayY, videoCanvas.width - (displayX + displayWidth), displayHeight);
 
-        // 検査範囲の枠を描画
         if (isInspecting) {
-          // 検査中：太い枠
           drawingCtx.strokeStyle = '#ffff00';
           drawingCtx.lineWidth = 6;
           drawingCtx.setLineDash([]);
           drawingCtx.strokeRect(displayX, displayY, displayWidth, displayHeight);
 
-          // テキスト：「検査中」「検査範囲」
           drawingCtx.fillStyle = '#ffff00';
           drawingCtx.font = 'bold 18px sans-serif';
           drawingCtx.textAlign = 'center';
@@ -1010,13 +993,9 @@
           drawingCtx.shadowOffsetX = 0;
           drawingCtx.shadowOffsetY = 0;
 
-          // 上部に「検査中」
           drawingCtx.fillText('検査中', displayX + displayWidth / 2, displayY - 30);
-          
-          // 下部に「検査範囲」
           drawingCtx.fillText('検査範囲', displayX + displayWidth / 2, displayY + displayHeight + 35);
         } else {
-          // 通常：普通の枠
           drawingCtx.strokeStyle = '#ffff00';
           drawingCtx.lineWidth = 4;
           drawingCtx.setLineDash([]);
@@ -1033,7 +1012,6 @@
             return;
           }
 
-          // videoCanvasのサイズを更新
           const rect = video.getBoundingClientRect();
           videoCanvas.width = rect.width;
           videoCanvas.height = rect.height;
@@ -1128,13 +1106,12 @@
         }
       });
 
-      // ========== 範囲選択機能 ==========
+      // ========== 範囲選択 ==========
 
       function drawSelectionGuide() {
         selectionCtx.clearRect(0, 0, selectionCanvas.width, selectionCanvas.height);
 
         if (isRangeSelecting && selectionStart && selectionEnd) {
-          // 選択中の範囲を緑の点線で描画
           const x = Math.min(selectionStart.x, selectionEnd.x);
           const y = Math.min(selectionStart.y, selectionEnd.y);
           const width = Math.abs(selectionEnd.x - selectionStart.x);
@@ -1203,7 +1180,6 @@
         }
       });
 
-      // タッチ対応
       selectionCanvas.addEventListener('touchstart', (e) => {
         if (!isRangeSelecting) return;
         const rect = selectionCanvas.getBoundingClientRect();
@@ -1282,12 +1258,12 @@
 
           const averagedFrame = averageImageData(frames);
           okReferenceImageData = averagedFrame;
-          okReferenceHSV = calculateImageHSVStats(averagedFrame);
+          okReferenceStats = calculateImageStats(averagedFrame);
 
           hideProgress();
           showStatus('OK基準を保存しました', 'success');
           updateButtonStates();
-          console.log('OK基準保存完了', okReferenceHSV);
+          console.log('OK基準保存完了', okReferenceStats);
         } catch (e) {
           showError('OK基準保存エラー: ' + e.message);
           console.error(e);
@@ -1344,9 +1320,8 @@
             return;
           }
 
-          // 平均化フレームを使用して強化判定を実行
-          const averagedFrame = averageImageData(frames);
-          const result = performEnhancedJudgment(scores, averagedFrame);
+          // 厳密な判定を実行
+          const result = performStrictJudgment(scores, frames);
 
           lastScore = result.avgScore;
           lastNgCount = result.ngCount;
@@ -1374,12 +1349,11 @@
       resetButton.addEventListener('click', () => {
         selectedRange = null;
         okReferenceImageData = null;
-        okReferenceHSV = null;
+        okReferenceStats = null;
         lastScore = null;
         lastNgCount = null;
         scoreValue.textContent = '-';
         scoreDetails.innerHTML = '';
-        scoreDetails.style.display = 'none';
         inspectionResult.textContent = '';
         inspectionResult.classList.remove('ng');
         updateButtonStates();
