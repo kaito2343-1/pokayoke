@@ -2,66 +2,369 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>ポカヨケ検査アプリ</title>
   <style>
-    body { font-family: system-ui, -apple-system, "Helvetica Neue", Arial; padding: 16px; }
-    #controls { margin-bottom: 12px; }
-    button { font-size: 16px; padding: 8px 12px; }
-    video { width: 100%; max-width: 640px; background: #000; border: 1px solid #ccc; }
-    #status { margin-top: 8px; font-weight: 600; }
-    #status .info { color: #333; }
-    #status .success { color: green; }
-    #status .loading { color: #0a66ff; }
-    #error { margin-top: 8px; color: red; font-weight: 700; white-space: pre-wrap; }
-    /* 既存のポカヨケ検査UI用スタブ */
-    #inspection { margin-top: 20px; padding: 12px; border: 1px dashed #999; }
-    .small { font-size: 0.9em; color: #666; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+      background: #000;
+      color: #fff;
+      padding: 0;
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    h1 {
+      font-size: 24px;
+      padding: 12px 16px;
+      background: #222;
+      border-bottom: 2px solid #444;
+      text-align: center;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .top-info {
+      background: #222;
+      padding: 12px 16px;
+      font-size: 14px;
+      text-align: center;
+      border-bottom: 1px solid #444;
+    }
+
+    .score-display {
+      font-size: 18px;
+      font-weight: bold;
+      color: #ffff00;
+    }
+
+    .threshold-display {
+      font-size: 14px;
+      color: #aaa;
+      margin-top: 4px;
+    }
+
+    .video-container {
+      position: relative;
+      flex: 1;
+      background: #000;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    #selectionCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      cursor: crosshair;
+      display: none;
+    }
+
+    #selectionCanvas.active {
+      display: block;
+    }
+
+    .result-overlay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 120px;
+      font-weight: bold;
+      text-shadow: 2px 2px 10px rgba(0, 0, 0, 0.8);
+      z-index: 100;
+      pointer-events: none;
+      display: none;
+    }
+
+    .result-overlay.ok {
+      color: #00ff00;
+      display: block;
+      animation: pulse 0.5s ease-out;
+    }
+
+    .result-overlay.ng {
+      color: #ff0000;
+      display: block;
+      animation: pulse 0.5s ease-out;
+    }
+
+    @keyframes pulse {
+      0% {
+        transform: translate(-50%, -50%) scale(0.8);
+        opacity: 0;
+      }
+      50% {
+        transform: translate(-50%, -50%) scale(1.1);
+      }
+      100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 1;
+      }
+    }
+
+    .status-message {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      z-index: 50;
+      max-width: 200px;
+    }
+
+    .status-message.info {
+      background: rgba(100, 150, 255, 0.7);
+    }
+
+    .status-message.error {
+      background: rgba(255, 100, 100, 0.7);
+      color: #ffcccc;
+    }
+
+    .status-message.success {
+      background: rgba(100, 200, 100, 0.7);
+      color: #ccffcc;
+    }
+
+    .controls {
+      background: #111;
+      padding: 12px;
+      border-top: 2px solid #444;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      align-items: center;
+      overflow-y: auto;
+      max-height: 150px;
+    }
+
+    button {
+      background: #0a66ff;
+      color: #fff;
+      border: none;
+      padding: 12px 16px;
+      font-size: 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+
+    button:active {
+      background: #0847cc;
+    }
+
+    button:disabled {
+      background: #666;
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    button.primary {
+      background: #0a66ff;
+    }
+
+    button.success {
+      background: #10a960;
+    }
+
+    button.success:active {
+      background: #089050;
+    }
+
+    button.warning {
+      background: #ff9800;
+    }
+
+    button.warning:active {
+      background: #e68900;
+    }
+
+    button.danger {
+      background: #ff4444;
+    }
+
+    button.danger:active {
+      background: #dd0000;
+    }
+
+    .slider-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #222;
+      padding: 8px 12px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+
+    .slider-control label {
+      font-size: 12px;
+      color: #aaa;
+      white-space: nowrap;
+    }
+
+    .slider-control input[type="range"] {
+      width: 80px;
+      height: 24px;
+      cursor: pointer;
+    }
+
+    .slider-control .value {
+      font-size: 12px;
+      color: #ffff00;
+      min-width: 30px;
+      text-align: right;
+    }
+
+    #error {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      right: 10px;
+      background: rgba(200, 0, 0, 0.9);
+      color: #ffcccc;
+      padding: 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      z-index: 50;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 120px;
+      overflow-y: auto;
+      display: none;
+    }
+
+    #error.show {
+      display: block;
+    }
   </style>
 </head>
 <body>
-  <h1>ポカヨケ検査アプリ</h1>
+  <div class="container">
+    <h1>ポカヨケ検査アプリ</h1>
 
-  <div id="controls">
-    <button id="cameraButton" aria-live="polite">カメラ開始 / 切替</button>
-  </div>
+    <div class="top-info">
+      <div class="score-display">
+        スコア: <span id="scoreValue">-</span>
+      </div>
+      <div class="threshold-display">
+        しきい値: <span id="thresholdValue">50</span>
+      </div>
+    </div>
 
-  <div>
-    <!-- iPhone Safari 対応のため playsinline, autoplay, muted を必ず付与 -->
-    <video id="video" playsinline autoplay muted></video>
-  </div>
+    <div class="video-container">
+      <video
+        id="video"
+        playsinline
+        autoplay
+        muted
+        webkit-playsinline="true"
+      ></video>
+      <canvas id="selectionCanvas"></canvas>
+      <div id="resultOverlay" class="result-overlay"></div>
+      <div id="statusMessage" class="status-message"></div>
+      <div id="error"></div>
+    </div>
 
-  <div id="status" aria-live="polite">
-    <span id="statusText" class="info">カメラは未起動です</span>
-  </div>
-  <div id="error" role="alert" aria-live="assertive"></div>
-
-  <!-- 既存のポカヨケ検査機能（削除しないでここに残す） -->
-  <div id="inspection">
-    <h2>既存ポカヨケ検査機能</h2>
-    <p class="small">ここには既存の検査ロジックや UI が入ります。カメラ起動部分のみを確実に動作させるようにしています。</p>
-    <!-- 既存コードのプレースホルダ -->
-    <div id="inspectionUI">
-      <!-- 既存機能を置き換えないためのサンプル要素 -->
-      <button id="dummyInspectBtn">検査を実行</button>
+    <div class="controls">
+      <button id="cameraButton" class="primary">カメラ開始 / 切替</button>
+      <button id="rangeSelectButton" class="primary" disabled>範囲選択</button>
+      <button id="saveOkButton" class="success" disabled>OK基準保存</button>
+      <button id="inspectButton" class="warning" disabled>検査開始</button>
+      <button id="resetButton" class="danger" disabled>リセット</button>
+      <button id="statusCheckButton" class="primary">状態確認</button>
+      <div class="slider-control">
+        <label for="thresholdSlider">しきい値:</label>
+        <input
+          id="thresholdSlider"
+          type="range"
+          min="0"
+          max="100"
+          value="50"
+          disabled
+        />
+        <span class="value" id="thresholdValueSlider">50</span>
+      </div>
     </div>
   </div>
 
   <script>
     (function () {
-      const cameraButton = document.getElementById('cameraButton');
+      // ========== DOM要素 ==========
       const video = document.getElementById('video');
-      const statusText = document.getElementById('statusText');
+      const canvas = document.getElementById('selectionCanvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const cameraButton = document.getElementById('cameraButton');
+      const rangeSelectButton = document.getElementById('rangeSelectButton');
+      const saveOkButton = document.getElementById('saveOkButton');
+      const inspectButton = document.getElementById('inspectButton');
+      const resetButton = document.getElementById('resetButton');
+      const statusCheckButton = document.getElementById('statusCheckButton');
+      const thresholdSlider = document.getElementById('thresholdSlider');
+      const thresholdValue = document.getElementById('thresholdValue');
+      const thresholdValueSlider = document.getElementById('thresholdValueSlider');
+      const scoreValue = document.getElementById('scoreValue');
+      const statusMessage = document.getElementById('statusMessage');
       const errorDiv = document.getElementById('error');
+      const resultOverlay = document.getElementById('resultOverlay');
 
+      // ========== 状態変数 ==========
       let currentStream = null;
+      let isRangeSelecting = false;
+      let selectionStart = null;
+      let selectionEnd = null;
+      let selectedRange = null; // { x, y, width, height }
+      let okReferenceImageData = null;
+      let lastScore = null;
+      let cameraWidth = 0;
+      let cameraHeight = 0;
 
-      // ユーティリティ: 既存ストリームを停止する
+      // ========== ユーティリティ関数 ==========
+
       function stopCurrentStream() {
         if (currentStream) {
           try {
             currentStream.getTracks().forEach(track => {
-              try { track.stop(); } catch (e) { console.warn('track.stop error', e); }
+              try {
+                track.stop();
+              } catch (e) {
+                console.warn('track.stop error', e);
+              }
             });
           } catch (e) {
             console.warn('stopCurrentStream error', e);
@@ -70,116 +373,396 @@
         }
       }
 
-      // ステータス更新
-      function setStatus(state, message) {
+      function showStatus(message, type = 'info') {
+        statusMessage.textContent = message;
+        statusMessage.className = 'status-message ' + type;
+        setTimeout(() => {
+          if (statusMessage.textContent === message) {
+            statusMessage.className = 'status-message';
+            statusMessage.textContent = '';
+          }
+        }, 3000);
+      }
+
+      function showError(message) {
+        errorDiv.textContent = message;
+        errorDiv.classList.add('show');
+        console.error(message);
+      }
+
+      function clearError() {
         errorDiv.textContent = '';
-        statusText.className = '';
-        if (state === 'loading') {
-          statusText.textContent = 'カメラ起動中';
-          statusText.classList.add('loading');
-        } else if (state === 'success') {
-          statusText.textContent = message || 'カメラ起動成功';
-          statusText.classList.add('success');
-        } else if (state === 'failed') {
-          statusText.textContent = 'カメラ起動失敗';
-          statusText.classList.add('info');
-          errorDiv.textContent = message || '不明なエラー';
-        } else {
-          statusText.textContent = message || 'カメラは未起動です';
-          statusText.classList.add('info');
-        }
+        errorDiv.classList.remove('show');
       }
 
-      // エラー表示（赤文字）
-      function showError(message, e) {
-        const msg = (message ? message + '\n' : '') + (e && e.message ? e.message : '');
-        errorDiv.textContent = msg;
-        console.error(message, e);
+      function showResult(isOk) {
+        resultOverlay.textContent = isOk ? 'OK' : 'NG';
+        resultOverlay.className = 'result-overlay ' + (isOk ? 'ok' : 'ng');
+        setTimeout(() => {
+          resultOverlay.className = 'result-overlay';
+        }, 2000);
       }
 
-      // getUserMedia の実行を行い、成功すれば video にセットする
+      function updateButtonStates() {
+        const hasCameraStream = currentStream !== null;
+        const hasSelectedRange = selectedRange !== null;
+        const hasOkReference = okReferenceImageData !== null;
+
+        rangeSelectButton.disabled = !hasCameraStream;
+        saveOkButton.disabled = !hasSelectedRange || !hasCameraStream;
+        inspectButton.disabled = !hasSelectedRange || !hasOkReference || !hasCameraStream;
+        thresholdSlider.disabled = !hasOkReference;
+        resetButton.disabled = !hasSelectedRange && !hasOkReference;
+      }
+
+      // ========== カメラ起動 ==========
+
       async function startCameraWithConstraints(constraints) {
-        // 必ず event ハンドラ内から直接呼ばれることを想定しているため、
-        // ここに追加のユーザー操作保証は不要（呼び出し側で制御）。
         try {
           const stream = await navigator.mediaDevices.getUserMedia(constraints);
           stopCurrentStream();
           currentStream = stream;
           video.srcObject = stream;
 
-          // iOS Safari では user gesture 内で video.play() を呼ぶと良い
+          // iOS Safari での再生
           try {
             await video.play();
           } catch (playError) {
-            // 再生が自動でブロックされる場合があるが、音声は muted なので通常問題なし
             console.warn('video.play() failed:', playError);
           }
+
+          // ビデオサイズの取得
+          video.addEventListener(
+            'loadedmetadata',
+            () => {
+              cameraWidth = video.videoWidth;
+              cameraHeight = video.videoHeight;
+              canvas.width = cameraWidth;
+              canvas.height = cameraHeight;
+              console.log(`Video loaded: ${cameraWidth}x${cameraHeight}`);
+            },
+            { once: true }
+          );
+
           return stream;
         } catch (err) {
           throw err;
         }
       }
 
-      // ボタン押下で必ず呼ばれるメイン処理
-      cameraButton.addEventListener('click', async function onCameraButtonClick(ev) {
-        // 要件：ボタン押下イベント内で直接 getUserMedia を呼ぶ
-        // （ここで async にして直接 await を呼び出す）
+      cameraButton.addEventListener('click', async () => {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          setStatus('failed');
-          showError('このブラウザはカメラ API をサポートしていません。', new Error('navigator.mediaDevices.getUserMedia not available'));
+          showError('このブラウザはカメラ API をサポートしていません。');
           return;
         }
 
-        setStatus('loading', 'カメラ起動中');
-        errorDiv.textContent = '';
-        console.log('カメラ起動試行: 背面優先');
-
-        // 常に新規に取得するため既存ストリームは止める（切替ボタンの意図に合わせる）
+        showStatus('カメラ起動中...', 'info');
+        clearError();
         stopCurrentStream();
 
-        // 1) 背面カメラを優先 (ideal: "environment")
-        const envConstraints = { video: { facingMode: { ideal: "environment" } }, audio: false };
-        // 2) 失敗したら前面カメラで再試行
-        const userConstraints = { video: { facingMode: { ideal: "user" } }, audio: false };
+        const envConstraints = {
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false
+        };
+        const userConstraints = {
+          video: { facingMode: { ideal: 'user' } },
+          audio: false
+        };
 
         try {
           await startCameraWithConstraints(envConstraints);
-          setStatus('success', 'カメラ起動成功（背面）');
+          showStatus('カメラ起動成功（背面）', 'success');
           console.log('カメラ起動成功（背面）');
+          updateButtonStates();
+          clearError();
         } catch (errEnv) {
           console.warn('背面カメラで失敗:', errEnv);
-          // If facingMode constraint fails (OverconstrainedError/NotFoundError/NotAllowedError etc) then try user-facing
           try {
             console.log('前面カメラで再試行');
             await startCameraWithConstraints(userConstraints);
-            setStatus('success', 'カメラ起動成功（前面）');
+            showStatus('カメラ起動成功（前面）', 'success');
             console.log('カメラ起動成功（前面）');
+            updateButtonStates();
+            clearError();
           } catch (errUser) {
             console.error('前面カメラでの再試行も失敗:', errUser);
-            setStatus('failed');
-            // 表示用のメッセージを詳細化
-            let message = 'カメラの起動に失敗しました。';
+            let message = 'カメラの起動に失敗しました。\n';
             if (errUser && errUser.name) {
-              message += ` エラー種別: ${errUser.name}`;
+              message += `エラー: ${errUser.name}\n`;
             }
             if (errUser && errUser.message) {
-              message += `\n詳細: ${errUser.message}`;
+              message += `詳細: ${errUser.message}`;
             }
-            showError(message, errUser);
+            showError(message);
+            updateButtonStates();
           }
         }
       });
 
-      // ページ離脱時にストリームを停止
+      // ========== 範囲選択機能 ==========
+
+      function drawSelection() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (selectedRange) {
+          // 保存済み範囲を描画
+          ctx.strokeStyle = '#ffff00';
+          ctx.lineWidth = 3;
+          ctx.strokeRect(
+            selectedRange.x,
+            selectedRange.y,
+            selectedRange.width,
+            selectedRange.height
+          );
+
+          // 範囲内を半透明で塗りつぶし
+          ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
+          ctx.fillRect(
+            selectedRange.x,
+            selectedRange.y,
+            selectedRange.width,
+            selectedRange.height
+          );
+        }
+
+        if (isRangeSelecting && selectionStart && selectionEnd) {
+          // 選択中の範囲を描画
+          const x = Math.min(selectionStart.x, selectionEnd.x);
+          const y = Math.min(selectionStart.y, selectionEnd.y);
+          const width = Math.abs(selectionEnd.x - selectionStart.x);
+          const height = Math.abs(selectionEnd.y - selectionStart.y);
+
+          ctx.strokeStyle = '#00ff00';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([5, 5]);
+          ctx.strokeRect(x, y, width, height);
+          ctx.setLineDash([]);
+
+          ctx.fillStyle = 'rgba(0, 255, 0, 0.05)';
+          ctx.fillRect(x, y, width, height);
+        }
+      }
+
+      function startRangeSelection() {
+        isRangeSelecting = true;
+        canvas.classList.add('active');
+        selectionStart = null;
+        selectionEnd = null;
+        showStatus('範囲を選択してください。', 'info');
+      }
+
+      function endRangeSelection() {
+        if (selectionStart && selectionEnd) {
+          const x = Math.min(selectionStart.x, selectionEnd.x);
+          const y = Math.min(selectionStart.y, selectionEnd.y);
+          const width = Math.abs(selectionEnd.x - selectionStart.x);
+          const height = Math.abs(selectionEnd.y - selectionStart.y);
+
+          if (width > 20 && height > 20) {
+            selectedRange = { x, y, width, height };
+            showStatus('範囲を選択しました。', 'success');
+          } else {
+            showStatus('範囲が小さすぎます。', 'info');
+          }
+        }
+
+        isRangeSelecting = false;
+        canvas.classList.remove('active');
+        selectionStart = null;
+        selectionEnd = null;
+        updateButtonStates();
+        drawSelection();
+      }
+
+      canvas.addEventListener('touchstart', (e) => {
+        if (!isRangeSelecting) return;
+        e.preventDefault();
+
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches[0];
+        selectionStart = {
+          x: (touch.clientX - rect.left) * (canvas.width / rect.width),
+          y: (touch.clientY - rect.top) * (canvas.height / rect.height)
+        };
+        drawSelection();
+      });
+
+      canvas.addEventListener('touchmove', (e) => {
+        if (!isRangeSelecting || !selectionStart) return;
+        e.preventDefault();
+
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches[0];
+        selectionEnd = {
+          x: (touch.clientX - rect.left) * (canvas.width / rect.width),
+          y: (touch.clientY - rect.top) * (canvas.height / rect.height)
+        };
+        drawSelection();
+      });
+
+      canvas.addEventListener('touchend', (e) => {
+        if (!isRangeSelecting) return;
+        e.preventDefault();
+        endRangeSelection();
+      });
+
+      rangeSelectButton.addEventListener('click', () => {
+        startRangeSelection();
+      });
+
+      // ========== OK基準保存 ==========
+
+      saveOkButton.addEventListener('click', () => {
+        if (!selectedRange || cameraWidth === 0 || cameraHeight === 0) {
+          showStatus('範囲を選択してください。', 'info');
+          return;
+        }
+
+        try {
+          // ビデオフレームを canvas に描画
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = cameraWidth;
+          tempCanvas.height = cameraHeight;
+          const tempCtx = tempCanvas.getContext('2d');
+          tempCtx.drawImage(video, 0, 0);
+
+          // 選択範囲を抽出
+          okReferenceImageData = tempCtx.getImageData(
+            selectedRange.x,
+            selectedRange.y,
+            selectedRange.width,
+            selectedRange.height
+          );
+
+          showStatus('OK基準を保存しました。', 'success');
+          updateButtonStates();
+        } catch (e) {
+          showError('OK基準の保存に失敗しました: ' + e.message);
+        }
+      });
+
+      // ========== 差分スコア計算 ==========
+
+      function calculateDifferenceScore() {
+        if (!selectedRange || !okReferenceImageData || cameraWidth === 0) {
+          return null;
+        }
+
+        try {
+          // 現在のビデオフレームを canvas に描画
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = cameraWidth;
+          tempCanvas.height = cameraHeight;
+          const tempCtx = tempCanvas.getContext('2d');
+          tempCtx.drawImage(video, 0, 0);
+
+          // 現在の選択範囲を抽出
+          const currentImageData = tempCtx.getImageData(
+            selectedRange.x,
+            selectedRange.y,
+            selectedRange.width,
+            selectedRange.height
+          );
+
+          // ピクセルごとに差分を計算
+          const refData = okReferenceImageData.data;
+          const curData = currentImageData.data;
+
+          let totalDifference = 0;
+          const pixelCount = refData.length / 4;
+
+          for (let i = 0; i < refData.length; i += 4) {
+            // RGB の差分を計算（A は無視）
+            const diffR = Math.abs(refData[i] - curData[i]);
+            const diffG = Math.abs(refData[i + 1] - curData[i + 1]);
+            const diffB = Math.abs(refData[i + 2] - curData[i + 2]);
+
+            totalDifference += (diffR + diffG + diffB) / 3;
+          }
+
+          // 0-100 のスコアに正規化
+          const score = Math.min(100, Math.round((totalDifference / pixelCount) * 100 / 255));
+          return score;
+        } catch (e) {
+          console.error('差分スコア計算エラー:', e);
+          return null;
+        }
+      }
+
+      // ========== 検査開始 ==========
+
+      inspectButton.addEventListener('click', () => {
+        if (!selectedRange || !okReferenceImageData) {
+          showStatus('基準を設定してください。', 'info');
+          return;
+        }
+
+        const score = calculateDifferenceScore();
+
+        if (score === null) {
+          showStatus('検査に失敗しました。', 'info');
+          return;
+        }
+
+        lastScore = score;
+        scoreValue.textContent = score;
+
+        const threshold = parseInt(thresholdSlider.value, 10);
+        const isOk = score <= threshold;
+
+        showResult(isOk);
+        showStatus(`検査完了: スコア ${score} (${isOk ? 'OK' : 'NG'})`, isOk ? 'success' : 'info');
+      });
+
+      // ========== しきい値スライダー ==========
+
+      thresholdSlider.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value, 10);
+        thresholdValue.textContent = value;
+        thresholdValueSlider.textContent = value;
+      });
+
+      // ========== リセット ==========
+
+      resetButton.addEventListener('click', () => {
+        selectedRange = null;
+        okReferenceImageData = null;
+        selectionStart = null;
+        selectionEnd = null;
+        lastScore = null;
+        scoreValue.textContent = '-';
+        resultOverlay.className = 'result-overlay';
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        canvas.classList.remove('active');
+        isRangeSelecting = false;
+        showStatus('リセットしました。', 'success');
+        updateButtonStates();
+      });
+
+      // ========== 状態確認 ==========
+
+      statusCheckButton.addEventListener('click', () => {
+        let status = 'ポカヨケ検査アプリ 状態確認\n\n';
+        status += `カメラ: ${currentStream ? '起動中' : '未起動'}\n`;
+        status += `範囲選択: ${selectedRange ? '完了' : '未選択'}\n`;
+        status += `OK基準: ${okReferenceImageData ? '保存済み' : '未保存'}\n`;
+        status += `最終スコア: ${lastScore !== null ? lastScore : '-'}\n`;
+        status += `しきい値: ${thresholdSlider.value}`;
+        alert(status);
+      });
+
+      // ========== ページ離脱時 ==========
+
       window.addEventListener('beforeunload', () => {
         stopCurrentStream();
       });
 
-      // --- 既存のポカヨケ検査機能のサンプルハンドラ（実装を壊さないためプレースホルダ） ---
-      document.getElementById('dummyInspectBtn').addEventListener('click', function () {
-        alert('既存の検査処理をここで実行します（プレースホルダ）。');
-      });
-      // ------------------------------------------------------------------------------
+      // ========== 初期化 ==========
+
+      updateButtonStates();
+      thresholdSlider.value = 50;
+      thresholdValue.textContent = '50';
+      thresholdValueSlider.textContent = '50';
 
     })();
   </script>
